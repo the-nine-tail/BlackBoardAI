@@ -18,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blackboardai.domain.entity.ShapeType
 import com.example.blackboardai.presentation.viewmodel.DrawingMode
@@ -28,12 +29,16 @@ fun DrawingToolbar(
     strokeWidth: Float,
     drawingMode: DrawingMode,
     selectedShape: ShapeType?,
+    title: String,
+    isSaving: Boolean,
     onColorSelected: (Color) -> Unit,
     onStrokeWidthChanged: (Float) -> Unit,
     onDrawingModeChanged: (DrawingMode) -> Unit,
     onShapeSelected: (ShapeType?) -> Unit,
     onUndo: () -> Unit,
     onClear: () -> Unit,
+    onNavigateBack: () -> Unit,
+    onSave: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showOptions by remember { mutableStateOf(false) }
@@ -49,9 +54,67 @@ fun DrawingToolbar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Navigation and title section
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Back button
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    
+                    // Title
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.width(120.dp)
+                    )
+                    
+                    // Save button
+                    IconButton(
+                        onClick = onSave,
+                        enabled = !isSaving,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Save,
+                                contentDescription = "Save Note",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    
+                    // Separator
+                    Divider(
+                        modifier = Modifier
+                            .height(32.dp)
+                            .width(1.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                    )
+                }
+                
                 // Drawing mode buttons
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -165,6 +228,9 @@ fun DrawingToolbar(
                         }
                     }
                 }
+                
+                // Push action buttons to the right
+                Spacer(modifier = Modifier.weight(1f))
                 
                 // Action buttons
                 Row(

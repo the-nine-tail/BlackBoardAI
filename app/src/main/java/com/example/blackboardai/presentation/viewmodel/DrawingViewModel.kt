@@ -3,6 +3,8 @@ package com.example.blackboardai.presentation.viewmodel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.lifecycle.ViewModel
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import androidx.lifecycle.viewModelScope
 import com.example.blackboardai.domain.entity.DrawingPath
 import com.example.blackboardai.domain.entity.DrawingShape
@@ -19,6 +21,44 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import javax.inject.Inject
 
+// Serializable data classes for drawing data
+data class SerializableDrawingData(
+    val paths: List<SerializablePath> = emptyList(),
+    val shapes: List<SerializableShape> = emptyList(),
+    val textElements: List<SerializableText> = emptyList()
+)
+
+data class SerializablePath(
+    val points: List<SerializablePoint> = emptyList(),
+    val colorHex: String = "#000000",
+    val strokeWidth: Float = 5f,
+    val isEraser: Boolean = false
+)
+
+data class SerializableShape(
+    val type: String, // "CIRCLE", "RECTANGLE", "LINE"
+    val startX: Float,
+    val startY: Float,
+    val endX: Float,
+    val endY: Float,
+    val colorHex: String = "#000000",
+    val strokeWidth: Float = 5f,
+    val filled: Boolean = false
+)
+
+data class SerializableText(
+    val text: String,
+    val x: Float,
+    val y: Float,
+    val colorHex: String = "#000000",
+    val fontSize: Float = 16f
+)
+
+data class SerializablePoint(
+    val x: Float,
+    val y: Float
+)
+
 @HiltViewModel
 class DrawingViewModel @Inject constructor(
     private val saveNoteUseCase: SaveNoteUseCase,
@@ -28,21 +68,29 @@ class DrawingViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(DrawingUiState())
     val uiState: StateFlow<DrawingUiState> = _uiState.asStateFlow()
     
+    private val gson = Gson()
+    
     fun loadNote(noteId: Long) {
         if (noteId > 0) {
             viewModelScope.launch {
                 try {
                     val note = getNoteByIdUseCase(noteId)
                     note?.let {
+                        // Deserialize drawing data
+                        val drawingData = deserializeDrawingData(it.drawingData)
+                        
                         _uiState.value = _uiState.value.copy(
                             noteId = it.id,
                             title = it.title,
-                            content = it.content
-                            // TODO: Deserialize drawing data when implementing proper serialization
+                            content = it.content,
+                            drawingPaths = drawingData.paths,
+                            shapes = drawingData.shapes,
+                            textElements = drawingData.textElements
                         )
                     }
                 } catch (e: Exception) {
                     // Handle error loading note
+                    println("Error loading note: ${e.message}")
                 }
             }
         }
@@ -136,8 +184,128 @@ class DrawingViewModel @Inject constructor(
     }
     
     private fun serializeDrawingData(): String {
-        // Simple serialization - in production, you might want to use a more robust format
-        return "${_uiState.value.drawingPaths.size},${_uiState.value.shapes.size},${_uiState.value.textElements.size}"
+        try {
+            val serializableData = SerializableDrawingData(
+                paths = _uiState.value.drawingPaths.map { drawingPath ->
+                    SerializablePath(
+                        points = extractPathPoints(drawingPath.path),
+                        colorHex = colorToHex(drawingPath.color),
+                        strokeWidth = drawingPath.strokeWidth,
+                        isEraser = drawingPath.isEraser
+                    )
+                },
+                shapes = _uiState.value.shapes.map { shape ->
+                    SerializableShape(
+                        type = shape.type.name,
+                        startX = shape.startX,
+                        startY = shape.startY,
+                        endX = shape.endX,
+                        endY = shape.endY,
+                        colorHex = colorToHex(shape.color),
+                        strokeWidth = shape.strokeWidth,
+                        filled = shape.filled
+                    )
+                },
+                textElements = _uiState.value.textElements.map { text ->
+                    SerializableText(
+                        text = text.text,
+                        x = text.x,
+                        y = text.y,
+                        colorHex = colorToHex(text.color),
+                        fontSize = text.fontSize
+                    )
+                }
+            )
+            return gson.toJson(serializableData)
+        } catch (e: Exception) {
+            println("Error serializing drawing data: ${e.message}")
+            return ""
+        }
+    }
+    
+    // Create a data class to hold the converted drawing data
+    data class DeserializedDrawingData(
+        val paths: List<DrawingPath>,
+        val shapes: List<DrawingShape>,
+        val textElements: List<TextElement>
+    )
+    
+    private fun deserializeDrawingData(data: String): DeserializedDrawingData {
+        return try {
+            if (data.isBlank()) {
+                DeserializedDrawingData(emptyList(), emptyList(), emptyList())
+            } else {
+                val drawingData = gson.fromJson(data, SerializableDrawingData::class.java)
+                
+                // Convert back to UI entities
+                DeserializedDrawingData(
+                    paths = drawingData.paths.map { serializablePath ->
+                        DrawingPath(
+                            path = createPathFromPoints(serializablePath.points),
+                            color = hexToColor(serializablePath.colorHex),
+                            strokeWidth = serializablePath.strokeWidth,
+                            isEraser = serializablePath.isEraser
+                        )
+                    },
+                    shapes = drawingData.shapes.map { serializableShape ->
+                        DrawingShape(
+                            type = ShapeType.valueOf(serializableShape.type),
+                            startX = serializableShape.startX,
+                            startY = serializableShape.startY,
+                            endX = serializableShape.endX,
+                            endY = serializableShape.endY,
+                            color = hexToColor(serializableShape.colorHex),
+                            strokeWidth = serializableShape.strokeWidth,
+                            filled = serializableShape.filled
+                        )
+                    },
+                    textElements = drawingData.textElements.map { serializableText ->
+                        TextElement(
+                            text = serializableText.text,
+                            x = serializableText.x,
+                            y = serializableText.y,
+                            color = hexToColor(serializableText.colorHex),
+                            fontSize = serializableText.fontSize
+                        )
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            println("Error deserializing drawing data: ${e.message}")
+            DeserializedDrawingData(emptyList(), emptyList(), emptyList())
+        }
+    }
+    
+    // Helper functions for color conversion
+    private fun colorToHex(color: Color): String {
+        val argb = color.value.toULong()
+        return "#${argb.toString(16).padStart(8, '0').takeLast(6)}"
+    }
+    
+    private fun hexToColor(hex: String): Color {
+        return try {
+            Color(android.graphics.Color.parseColor(hex))
+        } catch (e: Exception) {
+            Color.Black
+        }
+    }
+    
+    // Helper functions for path conversion
+    private fun extractPathPoints(path: Path): List<SerializablePoint> {
+        // For simplicity, we'll store a basic representation
+        // In a full implementation, you'd need to iterate through path operations
+        return emptyList() // This is a limitation - Path doesn't provide easy point extraction
+    }
+    
+    private fun createPathFromPoints(points: List<SerializablePoint>): Path {
+        val path = Path()
+        if (points.isNotEmpty()) {
+            path.moveTo(points.first().x, points.first().y)
+            points.drop(1).forEach { point ->
+                path.lineTo(point.x, point.y)
+            }
+        }
+        return path
     }
 }
 

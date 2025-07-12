@@ -75,58 +75,22 @@ fun DrawingScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Top app bar
-        TopAppBar(
-            title = {
-                Text(
-                    text = if (uiState.title.isBlank()) "New Note" else uiState.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            },
-            navigationIcon = {
-                IconButton(onClick = onNavigateBack) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back"
-                    )
-                }
-            },
-            actions = {
-                IconButton(
-                    onClick = { showTitleDialog = true },
-                    enabled = !uiState.isSaving
-                ) {
-                    if (uiState.isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Save,
-                            contentDescription = "Save Note"
-                        )
-                    }
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
-        )
-        
-        // Drawing toolbar at top
+        // Drawing toolbar with navigation at top
         DrawingToolbar(
             currentColor = uiState.currentColor,
             strokeWidth = uiState.strokeWidth,
             drawingMode = uiState.drawingMode,
             selectedShape = uiState.selectedShape,
+            title = if (uiState.title.isBlank()) "New Note" else uiState.title,
+            isSaving = uiState.isSaving,
             onColorSelected = viewModel::updateCurrentColor,
             onStrokeWidthChanged = viewModel::updateStrokeWidth,
             onDrawingModeChanged = viewModel::updateDrawingMode,
             onShapeSelected = viewModel::updateSelectedShape,
             onUndo = viewModel::undo,
             onClear = viewModel::clearCanvas,
+            onNavigateBack = onNavigateBack,
+            onSave = { showTitleDialog = true },
             modifier = Modifier.fillMaxWidth()
         )
         
