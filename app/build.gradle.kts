@@ -6,9 +6,26 @@ plugins {
     id("kotlin-parcelize")
 }
 
+// Java toolchain configuration for Java 21
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
 android {
     namespace = "com.example.blackboardai"
     compileSdk = 34
+
+    // Explicitly set Java toolchain
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+    
+    kotlinOptions {
+        jvmTarget = "21"
+    }
 
     defaultConfig {
         applicationId = "com.example.blackboardai"
@@ -29,18 +46,23 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
     buildFeatures {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
+        kotlinCompilerExtensionVersion = "1.5.8"
+    }
+    
+    // KAPT Configuration to fix annotation processing issues
+    kapt {
+        correctErrorTypes = true
+        useBuildCache = true
+        mapDiagnosticLocations = true
+        arguments {
+            arg("room.schemaLocation", "$projectDir/schemas")
+            arg("room.incremental", "true")
+            arg("room.expandProjection", "true")
+        }
     }
     packaging {
         resources {
@@ -71,9 +93,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
     
     // Hilt Dependency Injection
-    implementation("com.google.dagger:hilt-android:2.48")
-    kapt("com.google.dagger:hilt-compiler:2.48")
-    implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
+    implementation("com.google.dagger:hilt-android:2.51.1")
+    kapt("com.google.dagger:hilt-compiler:2.51.1")
+    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")
@@ -81,8 +103,8 @@ dependencies {
     kapt("androidx.room:room-compiler:2.6.1")
     
     // Google AI Edge SDK
-    implementation("com.google.ai.edge.litert:litert-gpu-api:1.4.0")
-    implementation("com.google.ai.edge.litert:litert-support-api:1.4.0")
+    implementation("com.google.mediapipe:tasks-genai:0.10.25")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
@@ -101,8 +123,8 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    androidTestImplementation("com.google.dagger:hilt-android-testing:2.48")
-    kaptAndroidTest("com.google.dagger:hilt-compiler:2.48")
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.51.1")
+    kaptAndroidTest("com.google.dagger:hilt-compiler:2.51.1")
     
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

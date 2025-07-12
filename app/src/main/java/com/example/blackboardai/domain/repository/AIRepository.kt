@@ -4,6 +4,5 @@ import kotlinx.coroutines.flow.Flow
 
 interface AIRepository {
     suspend fun generateResponse(prompt: String): Flow<String>
-    suspend fun isModelInitialized(): Boolean
-    suspend fun initializeModel(): Boolean
+    suspend fun isModelReady(): Boolean
 } 

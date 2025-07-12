@@ -24,6 +24,7 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val currentMessage by viewModel.currentMessage.collectAsState()
+    val isModelInitialized by viewModel.isModelInitialized.collectAsState()
     val listState = rememberLazyListState()
     
     LaunchedEffect(messages.size) {
@@ -55,6 +56,20 @@ fun ChatScreen(
                     )
                 }
             }
+            
+            if (!isModelInitialized) {
+                item {
+                    Text(
+                        text = "Initializing AI model... Please wait.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .wrapContentWidth(Alignment.CenterHorizontally)
+                            .padding(16.dp)
+                    )
+                }
+            }
         }
         
         Row(
@@ -68,12 +83,12 @@ fun ChatScreen(
                 onValueChange = viewModel::updateCurrentMessage,
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Type a message...") },
-                enabled = !isLoading
+                enabled = !isLoading && isModelInitialized
             )
             
             IconButton(
                 onClick = viewModel::sendMessage,
-                enabled = !isLoading && currentMessage.isNotBlank()
+                enabled = !isLoading && isModelInitialized && currentMessage.isNotBlank()
             ) {
                 Icon(
                     imageVector = Icons.Default.Send,

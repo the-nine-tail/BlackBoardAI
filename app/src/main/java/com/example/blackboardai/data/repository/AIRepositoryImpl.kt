@@ -15,11 +15,7 @@ class AIRepositoryImpl @Inject constructor(
         return aiService.generateResponse(prompt)
     }
     
-    override suspend fun isModelInitialized(): Boolean {
+    override suspend fun isModelReady(): Boolean {
         return aiService.isModelReady()
-    }
-    
-    override suspend fun initializeModel(): Boolean {
-        return aiService.initializeModel()
     }
 } 
