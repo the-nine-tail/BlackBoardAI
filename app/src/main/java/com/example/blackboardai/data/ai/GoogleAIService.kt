@@ -1,9 +1,13 @@
 package com.example.blackboardai.data.ai
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
+import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -62,6 +66,7 @@ class GoogleAIService @Inject constructor(
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelFile.absolutePath)
                 .setMaxTokens(2048)
+                .setMaxNumImages(1)
                 .build()
             
             llmInference = LlmInference.createFromOptions(context, options)
@@ -75,6 +80,7 @@ class GoogleAIService @Inject constructor(
             val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                 .setTopK(40)
                 .setTemperature(0.8f)
+                .setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
                 .build()
             
             llmSession = LlmInferenceSession.createFromOptions(llmInference!!, sessionOptions)
@@ -165,6 +171,90 @@ class GoogleAIService @Inject constructor(
      * Check if model is ready - simple boolean check, no initialization
      */
     fun isModelReady(): Boolean = isModelInitialized && llmSession != null
+    
+    /**
+     * Generate response with both text and image (multimodal) - Perfect for problem solving!
+     */
+    suspend fun generateMultimodalResponse(prompt: String, imageBitmap: Bitmap): Flow<String> = flow {
+        val session = llmSession
+        if (!isModelInitialized || session == null) {
+            Log.e(TAG, "❌ Model not ready for multimodal inference")
+            emit("Model not initialized. Please wait...")
+            return@flow
+        }
+        
+        val messageStartTime = System.currentTimeMillis()
+        Log.d(TAG, "🎨 Starting multimodal AI response generation")
+        Log.d(TAG, "📝 Prompt: ${prompt.take(100)}${if (prompt.length > 100) "..." else ""}")
+        Log.d(TAG, "🖼️ Image: ${imageBitmap.width}x${imageBitmap.height} (${imageBitmap.config})")
+        
+        try {
+            val response = suspendCancellableCoroutine { continuation ->
+                val responseBuilder = StringBuilder()
+                var firstTokenTime = 0L
+                var firstTokenReceived = false
+                
+                try {
+                    // Convert Bitmap to MPImage for MediaPipe
+                    val mpImage: MPImage = BitmapImageBuilder(imageBitmap).build()
+                    Log.d(TAG, "✅ Image converted to MPImage successfully")
+                    
+                    // Add image first (recommended by MediaPipe docs)
+                    session.addImage(mpImage)
+                    Log.d(TAG, "🖼️ Image added to session")
+                    
+                    // Then add text prompt
+                    session.addQueryChunk(prompt)
+                    Log.d(TAG, "📝 Text prompt added to session")
+                    
+                    // Generate response asynchronously
+                    session.generateResponseAsync { partialResult, done ->
+                        try {
+                            if (!firstTokenReceived) {
+                                firstTokenTime = System.currentTimeMillis()
+                                val timeToFirstToken = firstTokenTime - messageStartTime
+                                Log.d(TAG, "⚡ First multimodal token received in ${timeToFirstToken}ms")
+                                firstTokenReceived = true
+                            }
+                            
+                            responseBuilder.append(partialResult)
+                            
+                            if (done) {
+                                val fullResponse = responseBuilder.toString()
+                                val totalTime = System.currentTimeMillis() - messageStartTime
+                                val generationTime = if (firstTokenReceived) {
+                                    System.currentTimeMillis() - firstTokenTime
+                                } else {
+                                    0
+                                }
+                                
+                                Log.d(TAG, "🎉 Multimodal response complete!")
+                                Log.d(TAG, "📊 Stats: ${totalTime}ms total (${generationTime}ms generation)")
+                                Log.d(TAG, "📏 Response: ${fullResponse.length} chars")
+                                Log.d(TAG, "🧠 Preview: ${fullResponse.take(150)}${if (fullResponse.length > 150) "..." else ""}")
+                                
+                                continuation.resume(fullResponse)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "💥 Error in multimodal response callback: ${e.message}")
+                            continuation.resume("Error processing multimodal response: ${e.message}")
+                        }
+                    }
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "💥 Error setting up multimodal inference: ${e.message}")
+                    continuation.resume("Error setting up multimodal analysis: ${e.message}")
+                }
+            }
+            
+            emit(response)
+            
+        } catch (e: Exception) {
+            val totalTime = System.currentTimeMillis() - messageStartTime
+            Log.e(TAG, "💥 Multimodal response generation failed after ${totalTime}ms: ${e.message}")
+            emit("Error generating multimodal response: ${e.message}")
+        }
+    }.flowOn(Dispatchers.IO)
     
     /**
      * Generate response - optimized with detailed logging

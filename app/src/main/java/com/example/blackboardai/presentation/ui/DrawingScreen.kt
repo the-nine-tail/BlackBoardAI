@@ -5,8 +5,11 @@ import android.content.pm.ActivityInfo
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -70,6 +73,14 @@ fun DrawingScreen(
         )
     }
     
+    // AI Solution Dialog
+    if (uiState.showSolution) {
+        AISolutionDialog(
+            solution = uiState.aiSolution,
+            onDismiss = viewModel::dismissSolution
+        )
+    }
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -83,6 +94,7 @@ fun DrawingScreen(
             selectedShape = uiState.selectedShape,
             title = if (uiState.title.isBlank()) "New Note" else uiState.title,
             isSaving = uiState.isSaving,
+            isSolving = uiState.isSolving,
             onColorSelected = viewModel::updateCurrentColor,
             onStrokeWidthChanged = viewModel::updateStrokeWidth,
             onDrawingModeChanged = viewModel::updateDrawingMode,
@@ -91,6 +103,7 @@ fun DrawingScreen(
             onClear = viewModel::clearCanvas,
             onNavigateBack = onNavigateBack,
             onSave = { showTitleDialog = true },
+            onSolve = viewModel::solveWithAI,
             modifier = Modifier.fillMaxWidth()
         )
         
@@ -168,5 +181,62 @@ private fun TitleInputDialog(
                 Text("Cancel")
             }
         }
+    )
+}
+
+@Composable
+private fun AISolutionDialog(
+    solution: String,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    text = "AI Solution",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    SelectionContainer {
+                        Text(
+                            text = solution,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Close")
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
     )
 } 

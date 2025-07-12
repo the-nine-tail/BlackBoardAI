@@ -14,6 +14,7 @@ import com.example.blackboardai.domain.entity.ShapeType
 import com.example.blackboardai.domain.entity.TextElement
 import com.example.blackboardai.domain.usecase.GetNoteByIdUseCase
 import com.example.blackboardai.domain.usecase.SaveNoteUseCase
+import com.example.blackboardai.data.ai.GoogleAIService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +27,7 @@ import kotlin.math.sqrt
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.max
+import android.util.Log
 
 // Serializable data classes for drawing data
 data class SerializableDrawingData(
@@ -70,7 +72,8 @@ data class SerializablePoint(
 @HiltViewModel
 class DrawingViewModel @Inject constructor(
     private val saveNoteUseCase: SaveNoteUseCase,
-    private val getNoteByIdUseCase: GetNoteByIdUseCase
+    private val getNoteByIdUseCase: GetNoteByIdUseCase,
+    private val googleAIService: GoogleAIService
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(DrawingUiState())
@@ -160,6 +163,143 @@ class DrawingViewModel @Inject constructor(
     
     fun updateContent(content: String) {
         _uiState.value = _uiState.value.copy(content = content)
+    }
+    
+    fun dismissSolution() {
+        _uiState.value = _uiState.value.copy(showSolution = false, aiSolution = "")
+    }
+    
+    fun solveWithAI() {
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(isSolving = true)
+                
+                // Check if there's anything to solve
+                if (_uiState.value.drawingPaths.isEmpty() && 
+                    _uiState.value.shapes.isEmpty() && 
+                    _uiState.value.textElements.isEmpty()) {
+                    _uiState.value = _uiState.value.copy(
+                        isSolving = false,
+                        aiSolution = "Please draw a problem first! I can help solve math and physics problems from your drawings.",
+                        showSolution = true
+                    )
+                    return@launch
+                }
+                
+                // Export drawing as bitmap for AI analysis
+                Log.d("DrawingViewModel", "🎨 Exporting drawing as bitmap for AI analysis...")
+                val drawingBitmap = exportDrawingAsBitmap(1024, 1024)
+                
+                if (drawingBitmap == null) {
+                    _uiState.value = _uiState.value.copy(
+                        isSolving = false,
+                        aiSolution = "Sorry, I couldn't process your drawing. Please try drawing again.",
+                        showSolution = true
+                    )
+                    return@launch
+                }
+                
+                Log.d("DrawingViewModel", "✅ Bitmap exported: ${drawingBitmap.width}x${drawingBitmap.height}")
+                
+                // Create an optimized prompt for image-based problem solving
+                val multimodalPrompt = createImageBasedSolvingPrompt()
+                Log.d("DrawingViewModel", "📝 Created multimodal prompt for Gemma")
+                
+                // Use the new multimodal method with both image and text
+                googleAIService.generateMultimodalResponse(multimodalPrompt, drawingBitmap).collect { response ->
+                    _uiState.value = _uiState.value.copy(
+                        isSolving = false,
+                        aiSolution = response,
+                        showSolution = true
+                    )
+                    Log.d("DrawingViewModel", "🎉 Received multimodal AI response: ${response.length} chars")
+                }
+                
+            } catch (e: Exception) {
+                Log.e("DrawingViewModel", "💥 Error in multimodal AI solving: ${e.message}")
+                _uiState.value = _uiState.value.copy(
+                    isSolving = false,
+                    aiSolution = "Sorry, I couldn't solve this problem right now. Please check your internet connection and try again.\n\nError: ${e.message}",
+                    showSolution = true
+                )
+            }
+        }
+    }
+    
+    private fun generateDrawingDescription(): String {
+        val description = StringBuilder()
+        
+        description.append("I have a drawing that contains:\n\n")
+        
+        // Describe paths (freehand drawing)
+        if (_uiState.value.drawingPaths.isNotEmpty()) {
+            description.append("${_uiState.value.drawingPaths.size} hand-drawn strokes/lines")
+            val colors = _uiState.value.drawingPaths.map { colorToHex(it.color) }.distinct()
+            if (colors.size > 1) {
+                description.append(" in ${colors.size} different colors")
+            }
+            description.append("\n")
+        }
+        
+        // Describe shapes
+        if (_uiState.value.shapes.isNotEmpty()) {
+            val shapeTypes = _uiState.value.shapes.groupBy { it.type }
+            shapeTypes.forEach { (type, shapes) ->
+                description.append("${shapes.size} ${type.name.lowercase()}(s)\n")
+            }
+        }
+        
+        // Describe text elements
+        if (_uiState.value.textElements.isNotEmpty()) {
+            description.append("Text elements: ")
+            _uiState.value.textElements.forEach { text ->
+                description.append("\"${text.text}\" ")
+            }
+            description.append("\n")
+        }
+        
+        // Add note content if available
+        if (_uiState.value.content.isNotBlank()) {
+            description.append("\nAdditional context: ${_uiState.value.content}\n")
+        }
+        
+        return description.toString()
+    }
+    
+    private fun createSolvingPrompt(drawingDescription: String): String {
+        return """
+            You are an expert AI tutor specializing in mathematics and physics. I have drawn a problem and need your help solving it.
+            
+            Drawing Description:
+            $drawingDescription
+            
+            Please analyze this drawing and:
+            
+            1. **IDENTIFY THE PROBLEM**: Determine what mathematical or physics problem is being presented in the drawing
+            
+            2. **PROVIDE COMPLETE SOLUTION**: Give a detailed, step-by-step solution with:
+               - Clear explanation of each step
+               - All calculations shown
+               - Reasoning behind each step
+               - Final answer clearly stated
+            
+            3. **EXPLAIN CONCEPTS**: Explain any key concepts, formulas, or principles used
+            
+            4. **VISUAL GUIDANCE**: If helpful, describe how to visualize or diagram the solution
+            
+            Common problem types I can help with:
+            - Algebra equations and inequalities
+            - Geometry (area, perimeter, angles, triangles, circles)
+            - Trigonometry problems
+            - Calculus (derivatives, integrals, limits)
+            - Physics (motion, forces, energy, waves, electricity)
+            - Word problems and applications
+            - Graph analysis and function problems
+            
+            If the drawing is unclear or doesn't represent a clear mathematical/physics problem, please ask for clarification or suggest how to better present the problem.
+            
+            Please provide a comprehensive, educational response that helps me understand both the solution and the underlying concepts.
+        """.trimIndent()
     }
     
     fun saveNote(onSuccess: (Long) -> Unit, onError: (String) -> Unit) {
@@ -455,6 +595,63 @@ class DrawingViewModel @Inject constructor(
         val drawingSize = drawingData.toByteArray().size
         return (titleSize + contentSize + drawingSize).toLong()
     }
+
+    private fun createImageBasedSolvingPrompt(): String {
+        return """
+            You are an expert AI tutor specializing in mathematics and physics with advanced visual analysis capabilities.
+            
+            I have drawn a mathematical or physics problem on a digital canvas. Please analyze the image I'm sharing and provide a comprehensive solution.
+            
+            **ANALYZE THE IMAGE AND:**
+            
+            1. **🔍 VISUAL ANALYSIS**: 
+               - Identify all mathematical symbols, numbers, equations, and diagrams in the image
+               - Recognize geometric shapes, graphs, charts, or physics diagrams
+               - Note any handwritten text, labels, or annotations
+               - Describe the spatial relationships between elements
+            
+            2. **🧮 PROBLEM IDENTIFICATION**: 
+               - Determine the specific type of mathematical or physics problem
+               - Identify what is being asked or what needs to be solved
+               - Recognize the domain (algebra, geometry, calculus, physics, etc.)
+            
+            3. **📖 STEP-BY-STEP SOLUTION**: 
+               - Provide a complete, detailed solution with clear steps
+               - Show all calculations and mathematical work
+               - Explain the reasoning behind each step
+               - Use proper mathematical notation in your response
+               - Highlight the final answer clearly
+            
+            4. **🎓 EDUCATIONAL EXPLANATION**: 
+               - Explain key concepts and formulas used
+               - Provide context for why certain methods were chosen
+               - Suggest alternative approaches if applicable
+               - Include memory aids or tips for similar problems
+            
+            5. **✅ VERIFICATION**: 
+               - Check your work and verify the solution makes sense
+               - Mention any assumptions made
+               - Suggest ways to double-check the answer
+            
+            **PROBLEM TYPES I CAN SOLVE:**
+            - Algebra: equations, inequalities, systems, polynomials
+            - Geometry: area, perimeter, angles, triangles, circles, 3D shapes
+            - Trigonometry: sin/cos/tan, identities, wave functions
+            - Calculus: derivatives, integrals, limits, optimization
+            - Physics: mechanics, thermodynamics, waves, electricity, magnetism
+            - Statistics: probability, distributions, data analysis
+            - Pre-calculus: functions, logarithms, exponentials
+            - Graph analysis: interpreting charts, function behavior
+            
+            **SPECIAL INSTRUCTIONS:**
+            - If the image shows a graph, analyze coordinates, slopes, and key points
+            - If it's a geometric figure, identify measurements and relationships
+            - If it's a physics setup, recognize forces, motion, or energy concepts
+            - If text is unclear, make reasonable interpretations and state your assumptions
+            
+            Please provide a thorough, educational response that helps me not just get the answer, but truly understand the problem and solution method.
+        """.trimIndent()
+    }
 }
 
 data class DrawingUiState(
@@ -468,7 +665,10 @@ data class DrawingUiState(
     val title: String = "",
     val content: String = "",
     val noteId: Long = 0L,
-    val isSaving: Boolean = false
+    val isSaving: Boolean = false,
+    val isSolving: Boolean = false,
+    val aiSolution: String = "",
+    val showSolution: Boolean = false
 )
 
 enum class DrawingMode {

@@ -31,6 +31,7 @@ fun DrawingToolbar(
     selectedShape: ShapeType?,
     title: String,
     isSaving: Boolean,
+    isSolving: Boolean = false,
     onColorSelected: (Color) -> Unit,
     onStrokeWidthChanged: (Float) -> Unit,
     onDrawingModeChanged: (DrawingMode) -> Unit,
@@ -39,6 +40,7 @@ fun DrawingToolbar(
     onClear: () -> Unit,
     onNavigateBack: () -> Unit,
     onSave: () -> Unit,
+    onSolve: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showOptions by remember { mutableStateOf(false) }
@@ -102,6 +104,28 @@ fun DrawingToolbar(
                                 contentDescription = "Save Note",
                                 modifier = Modifier.size(20.dp),
                                 tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    
+                    // Solve button (AI-powered problem solving)
+                    IconButton(
+                        onClick = onSolve,
+                        enabled = !isSolving,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        if (isSolving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Psychology, // Brain icon for AI solving
+                                contentDescription = "Solve with AI",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.secondary
                             )
                         }
                     }

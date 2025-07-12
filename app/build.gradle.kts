@@ -107,6 +107,9 @@ dependencies {
     implementation("com.google.mediapipe:tasks-genai:0.10.25")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
+    // MediaPipe Framework for image processing
+    implementation("com.google.mediapipe:tasks-vision:0.20230731")
+    
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     
