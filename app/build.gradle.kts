@@ -91,6 +91,7 @@ dependencies {
     // ViewModel and LiveData
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     
     // Hilt Dependency Injection
     implementation("com.google.dagger:hilt-android:2.51.1")
@@ -111,6 +112,18 @@ dependencies {
     
     // JSON handling
     implementation("com.google.code.gson:gson:2.10.1")
+    
+    // Drawing and Canvas functionality
+    implementation("androidx.compose.foundation:foundation")
+    
+    // Image processing and bitmap handling
+    implementation("androidx.compose.ui:ui-graphics")
+    
+    // Permission handling
+    implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+    
+    // Date formatting
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.5.0")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

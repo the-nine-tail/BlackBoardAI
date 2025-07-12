@@ -3,6 +3,7 @@ package com.example.blackboardai.di
 import android.content.Context
 import androidx.room.Room
 import com.example.blackboardai.data.local.dao.ChatMessageDao
+import com.example.blackboardai.data.local.dao.NoteDao
 import com.example.blackboardai.data.local.database.BlackBoardAIDatabase
 import dagger.Module
 import dagger.Provides
@@ -26,12 +27,18 @@ object DatabaseModule {
             context,
             BlackBoardAIDatabase::class.java,
             BlackBoardAIDatabase.DATABASE_NAME
-        ).build()
+        ).fallbackToDestructiveMigration() // For simplicity during development
+        .build()
     }
     
     @Provides
     fun provideChatMessageDao(database: BlackBoardAIDatabase): ChatMessageDao {
         return database.chatMessageDao()
+    }
+    
+    @Provides
+    fun provideNoteDao(database: BlackBoardAIDatabase): NoteDao {
+        return database.noteDao()
     }
     
     @Provides

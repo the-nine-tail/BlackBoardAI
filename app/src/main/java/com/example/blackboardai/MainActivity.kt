@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import com.example.blackboardai.presentation.ui.ChatScreen
+import com.example.blackboardai.presentation.navigation.BlackBoardNavigation
 import com.example.blackboardai.ui.theme.BlackBoardAITheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ChatScreen()
+                    BlackBoardNavigation()
                 }
             }
         }
