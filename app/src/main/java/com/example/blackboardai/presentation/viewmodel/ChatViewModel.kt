@@ -37,6 +37,9 @@ class ChatViewModel @Inject constructor(
     private val _isModelInitialized = MutableStateFlow(false)
     val isModelInitialized: StateFlow<Boolean> = _isModelInitialized.asStateFlow()
     
+    private val _accelerationStatus = MutableStateFlow("Not Initialized")
+    val accelerationStatus: StateFlow<String> = _accelerationStatus.asStateFlow()
+    
     init {
         Log.d(TAG, "🏗️ ChatViewModel initialized")
         loadMessages()
@@ -66,6 +69,9 @@ class ChatViewModel @Inject constructor(
             val isReady = googleAIService.isModelReady()
             _isModelInitialized.value = isReady
             
+            // Update acceleration status
+            _accelerationStatus.value = googleAIService.getAccelerationInfo()
+            
             if (isReady) {
                 Log.d(TAG, "✅ Model is ready for inference")
             } else {
@@ -88,11 +94,16 @@ class ChatViewModel @Inject constructor(
             while (!googleAIService.isModelReady() && attempts < maxAttempts) {
                 kotlinx.coroutines.delay(1000) // Check every second
                 attempts++
+                
+                // Update acceleration status during monitoring
+                _accelerationStatus.value = googleAIService.getAccelerationInfo()
+                
                 Log.d(TAG, "⏳ Waiting for model... (${attempts}s)")
             }
             
             val isReady = googleAIService.isModelReady()
             _isModelInitialized.value = isReady
+            _accelerationStatus.value = googleAIService.getAccelerationInfo()
             
             if (isReady) {
                 Log.d(TAG, "✅ Model became ready after ${attempts}s")

@@ -25,6 +25,7 @@ fun ChatScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val currentMessage by viewModel.currentMessage.collectAsState()
     val isModelInitialized by viewModel.isModelInitialized.collectAsState()
+    val accelerationStatus by viewModel.accelerationStatus.collectAsState()
     val listState = rememberLazyListState()
     
     LaunchedEffect(messages.size) {
@@ -38,6 +39,38 @@ fun ChatScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        // GPU Acceleration Status Display
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = when {
+                    accelerationStatus.contains("GPU") -> MaterialTheme.colorScheme.primaryContainer
+                    accelerationStatus.contains("CPU") -> MaterialTheme.colorScheme.secondaryContainer
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                }
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Acceleration: $accelerationStatus",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        accelerationStatus.contains("GPU") -> MaterialTheme.colorScheme.onPrimaryContainer
+                        accelerationStatus.contains("CPU") -> MaterialTheme.colorScheme.onSecondaryContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+        }
+        
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f),
@@ -60,7 +93,7 @@ fun ChatScreen(
             if (!isModelInitialized) {
                 item {
                     Text(
-                        text = "Initializing AI model... Please wait.",
+                        text = "Initializing AI model with GPU acceleration... Please wait.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
