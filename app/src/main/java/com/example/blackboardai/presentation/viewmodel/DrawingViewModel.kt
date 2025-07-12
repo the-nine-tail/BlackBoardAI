@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.lifecycle.viewModelScope
 import com.example.blackboardai.domain.entity.DrawingPath
+import com.example.blackboardai.domain.entity.DrawingPoint
 import com.example.blackboardai.domain.entity.DrawingShape
 import com.example.blackboardai.domain.entity.Note
 import com.example.blackboardai.domain.entity.ShapeType
@@ -20,6 +21,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import javax.inject.Inject
+import kotlin.math.pow
+import kotlin.math.sqrt
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.max
 
 // Serializable data classes for drawing data
 data class SerializableDrawingData(
@@ -56,7 +62,9 @@ data class SerializableText(
 
 data class SerializablePoint(
     val x: Float,
-    val y: Float
+    val y: Float,
+    val pressure: Float = 1f,
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 @HiltViewModel
@@ -159,13 +167,15 @@ class DrawingViewModel @Inject constructor(
             try {
                 _uiState.value = _uiState.value.copy(isSaving = true)
                 
+                val drawingDataJson = serializeDrawingData()
                 val note = Note(
                     id = _uiState.value.noteId,
                     title = _uiState.value.title.ifBlank { "Untitled Note" },
                     content = _uiState.value.content,
-                    drawingData = serializeDrawingData(),
+                    drawingData = drawingDataJson,
                     createdAt = Clock.System.now(),
                     updatedAt = Clock.System.now(),
+                    size = calculateNoteSize(drawingDataJson),
                     backgroundColor = "#FFFFFF"
                 )
                 
@@ -188,7 +198,14 @@ class DrawingViewModel @Inject constructor(
             val serializableData = SerializableDrawingData(
                 paths = _uiState.value.drawingPaths.map { drawingPath ->
                     SerializablePath(
-                        points = extractPathPoints(drawingPath.path),
+                        points = drawingPath.points.map { point ->
+                            SerializablePoint(
+                                x = point.x,
+                                y = point.y,
+                                pressure = point.pressure,
+                                timestamp = point.timestamp
+                            )
+                        },
                         colorHex = colorToHex(drawingPath.color),
                         strokeWidth = drawingPath.strokeWidth,
                         isEraser = drawingPath.isEraser
@@ -241,7 +258,14 @@ class DrawingViewModel @Inject constructor(
                 DeserializedDrawingData(
                     paths = drawingData.paths.map { serializablePath ->
                         DrawingPath(
-                            path = createPathFromPoints(serializablePath.points),
+                            points = serializablePath.points.map { point ->
+                                DrawingPoint(
+                                    x = point.x,
+                                    y = point.y,
+                                    pressure = point.pressure,
+                                    timestamp = point.timestamp
+                                )
+                            },
                             color = hexToColor(serializablePath.colorHex),
                             strokeWidth = serializablePath.strokeWidth,
                             isEraser = serializablePath.isEraser
@@ -290,22 +314,146 @@ class DrawingViewModel @Inject constructor(
         }
     }
     
-    // Helper functions for path conversion
-    private fun extractPathPoints(path: Path): List<SerializablePoint> {
-        // For simplicity, we'll store a basic representation
-        // In a full implementation, you'd need to iterate through path operations
-        return emptyList() // This is a limitation - Path doesn't provide easy point extraction
+    // Helper functions for future Gemma AI integration
+    
+    /**
+     * Export drawing as bitmap for AI processing
+     * This will be useful when integrating with Gemma model
+     */
+    fun exportDrawingAsBitmap(width: Int = 1024, height: Int = 1024): android.graphics.Bitmap? {
+        try {
+            val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            
+            // Fill with white background
+            canvas.drawColor(android.graphics.Color.WHITE)
+            
+            val paint = android.graphics.Paint().apply {
+                isAntiAlias = true
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                strokeJoin = android.graphics.Paint.Join.ROUND
+            }
+            
+            // Draw all paths
+            _uiState.value.drawingPaths.forEach { drawingPath ->
+                if (drawingPath.points.isNotEmpty()) {
+                    paint.color = drawingPath.color.value.toInt()
+                    paint.strokeWidth = drawingPath.strokeWidth
+                    
+                    val path = android.graphics.Path()
+                    path.moveTo(drawingPath.points.first().x, drawingPath.points.first().y)
+                    drawingPath.points.drop(1).forEach { point ->
+                        path.lineTo(point.x, point.y)
+                    }
+                    canvas.drawPath(path, paint)
+                }
+            }
+            
+            // Draw all shapes
+            _uiState.value.shapes.forEach { shape ->
+                paint.color = shape.color.value.toInt()
+                paint.strokeWidth = shape.strokeWidth
+                
+                when (shape.type) {
+                    ShapeType.RECTANGLE -> {
+                        canvas.drawRect(
+                            min(shape.startX, shape.endX),
+                            min(shape.startY, shape.endY),
+                            max(shape.startX, shape.endX),
+                            max(shape.startY, shape.endY),
+                            paint
+                        )
+                    }
+                    ShapeType.CIRCLE -> {
+                        val centerX = (shape.startX + shape.endX) / 2
+                        val centerY = (shape.startY + shape.endY) / 2
+                        val radius = sqrt(
+                            (shape.endX - shape.startX).toDouble().pow(2.0) +
+                            (shape.endY - shape.startY).toDouble().pow(2.0)
+                        ).toFloat() / 2
+                        canvas.drawCircle(centerX, centerY, radius, paint)
+                    }
+                    ShapeType.LINE -> {
+                        canvas.drawLine(shape.startX, shape.startY, shape.endX, shape.endY, paint)
+                    }
+                }
+            }
+            
+            return bitmap
+        } catch (e: Exception) {
+            println("Error exporting bitmap: ${e.message}")
+            return null
+        }
     }
     
-    private fun createPathFromPoints(points: List<SerializablePoint>): Path {
-        val path = Path()
-        if (points.isNotEmpty()) {
-            path.moveTo(points.first().x, points.first().y)
-            points.drop(1).forEach { point ->
-                path.lineTo(point.x, point.y)
+    /**
+     * Export drawing as SVG for AI processing and web compatibility
+     * SVG format is both human-readable and AI-processable
+     */
+    fun exportDrawingAsSVG(width: Int = 1024, height: Int = 1024): String {
+        val svg = StringBuilder()
+        svg.append("<svg width=\"$width\" height=\"$height\" xmlns=\"http://www.w3.org/2000/svg\">\n")
+        svg.append("<rect width=\"100%\" height=\"100%\" fill=\"white\"/>\n")
+        
+        // Add paths
+        _uiState.value.drawingPaths.forEach { drawingPath ->
+            if (drawingPath.points.isNotEmpty()) {
+                val pathData = StringBuilder("M ${drawingPath.points.first().x},${drawingPath.points.first().y}")
+                drawingPath.points.drop(1).forEach { point ->
+                    pathData.append(" L ${point.x},${point.y}")
+                }
+                
+                svg.append("<path d=\"$pathData\" ")
+                svg.append("stroke=\"${colorToHex(drawingPath.color)}\" ")
+                svg.append("stroke-width=\"${drawingPath.strokeWidth}\" ")
+                svg.append("fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n")
             }
         }
-        return path
+        
+        // Add shapes
+        _uiState.value.shapes.forEach { shape ->
+            when (shape.type) {
+                ShapeType.RECTANGLE -> {
+                    svg.append("<rect x=\"${min(shape.startX, shape.endX)}\" ")
+                    svg.append("y=\"${min(shape.startY, shape.endY)}\" ")
+                    svg.append("width=\"${abs(shape.endX - shape.startX)}\" ")
+                    svg.append("height=\"${abs(shape.endY - shape.startY)}\" ")
+                    svg.append("stroke=\"${colorToHex(shape.color)}\" ")
+                    svg.append("stroke-width=\"${shape.strokeWidth}\" fill=\"none\"/>\n")
+                }
+                ShapeType.CIRCLE -> {
+                    val centerX = (shape.startX + shape.endX) / 2
+                    val centerY = (shape.startY + shape.endY) / 2
+                    val radius = sqrt(
+                        (shape.endX - shape.startX).toDouble().pow(2.0) +
+                        (shape.endY - shape.startY).toDouble().pow(2.0)
+                    ).toFloat() / 2
+                    svg.append("<circle cx=\"$centerX\" cy=\"$centerY\" r=\"$radius\" ")
+                    svg.append("stroke=\"${colorToHex(shape.color)}\" ")
+                    svg.append("stroke-width=\"${shape.strokeWidth}\" fill=\"none\"/>\n")
+                }
+                ShapeType.LINE -> {
+                    svg.append("<line x1=\"${shape.startX}\" y1=\"${shape.startY}\" ")
+                    svg.append("x2=\"${shape.endX}\" y2=\"${shape.endY}\" ")
+                    svg.append("stroke=\"${colorToHex(shape.color)}\" ")
+                    svg.append("stroke-width=\"${shape.strokeWidth}\"/>\n")
+                }
+            }
+        }
+        
+        svg.append("</svg>")
+        return svg.toString()
+    }
+    
+    /**
+     * Calculate the size of the note in bytes for metadata
+     */
+    private fun calculateNoteSize(drawingData: String): Long {
+        val titleSize = _uiState.value.title.toByteArray().size
+        val contentSize = _uiState.value.content.toByteArray().size
+        val drawingSize = drawingData.toByteArray().size
+        return (titleSize + contentSize + drawingSize).toLong()
     }
 }
 

@@ -6,12 +6,31 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 
 data class DrawingPath(
-    val path: Path = Path(),
+    val points: List<DrawingPoint> = emptyList(), // Store actual points for perfect preservation
     val color: Color = Color.Black,
     val strokeWidth: Float = 5f,
     val strokeCap: StrokeCap = StrokeCap.Round,
     val strokeJoin: StrokeJoin = StrokeJoin.Round,
     val isEraser: Boolean = false
+) {
+    // Generate Path from points for rendering
+    fun toPath(): Path {
+        val path = Path()
+        if (points.isNotEmpty()) {
+            path.moveTo(points.first().x, points.first().y)
+            points.drop(1).forEach { point ->
+                path.lineTo(point.x, point.y)
+            }
+        }
+        return path
+    }
+}
+
+data class DrawingPoint(
+    val x: Float,
+    val y: Float,
+    val pressure: Float = 1f, // For future pressure sensitivity
+    val timestamp: Long = System.currentTimeMillis() // For stroke speed analysis
 )
 
 data class DrawingShape(

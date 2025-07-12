@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.pow
 import kotlin.math.sqrt
 import com.example.blackboardai.domain.entity.DrawingPath
+import com.example.blackboardai.domain.entity.DrawingPoint
 import com.example.blackboardai.domain.entity.DrawingShape
 import com.example.blackboardai.domain.entity.ShapeType
 import com.example.blackboardai.domain.entity.TextElement
@@ -38,7 +39,7 @@ fun DrawingCanvas(
     onAddText: (TextElement) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var currentPath by remember { mutableStateOf(Path()) }
+    var currentPoints by remember { mutableStateOf<List<DrawingPoint>>(emptyList()) }
     var currentDrawingPath by remember { mutableStateOf<DrawingPath?>(null) }
     var startPoint by remember { mutableStateOf<Offset?>(null) }
     var endPoint by remember { mutableStateOf<Offset?>(null) }
@@ -59,10 +60,17 @@ fun DrawingCanvas(
                     onDragStart = { offset ->
                         when (drawingMode) {
                             DrawingMode.DRAW, DrawingMode.ERASE -> {
-                                currentPath = Path()
-                                currentPath.moveTo(offset.x, offset.y)
+                                // Start new path with initial point
+                                currentPoints = listOf(
+                                    DrawingPoint(
+                                        x = offset.x,
+                                        y = offset.y,
+                                        pressure = 1f,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                )
                                 currentDrawingPath = DrawingPath(
-                                    path = currentPath,
+                                    points = currentPoints,
                                     color = if (drawingMode == DrawingMode.ERASE) Color.White else currentColor,
                                     strokeWidth = strokeWidth,
                                     isEraser = drawingMode == DrawingMode.ERASE
@@ -96,14 +104,16 @@ fun DrawingCanvas(
                         when (drawingMode) {
                             DrawingMode.DRAW, DrawingMode.ERASE -> {
                                 if (isDrawing) {
-                                    // Create a new path to ensure recomposition
-                                    val newPath = Path().apply {
-                                        addPath(currentPath)
-                                        lineTo(change.position.x, change.position.y)
-                                    }
-                                    currentPath = newPath
+                                    // Add new point to current path
+                                    val newPoint = DrawingPoint(
+                                        x = change.position.x,
+                                        y = change.position.y,
+                                        pressure = 1f,
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                    currentPoints = currentPoints + newPoint
                                     currentDrawingPath = DrawingPath(
-                                        path = newPath,
+                                        points = currentPoints,
                                         color = if (drawingMode == DrawingMode.ERASE) Color.White else currentColor,
                                         strokeWidth = strokeWidth,
                                         isEraser = drawingMode == DrawingMode.ERASE
@@ -130,8 +140,8 @@ fun DrawingCanvas(
                                 }
                                 currentDrawingPath = null
                                 isDrawing = false
-                                // Reset the path for next drawing
-                                currentPath = Path()
+                                // Reset the points for next drawing
+                                currentPoints = emptyList()
                             }
                             DrawingMode.SHAPE -> {
                                 val start = startPoint
@@ -164,28 +174,32 @@ fun DrawingCanvas(
         
         // Draw all completed paths
         paths.forEach { drawingPath ->
-            drawPath(
-                path = drawingPath.path,
-                color = drawingPath.color,
-                style = Stroke(
-                    width = drawingPath.strokeWidth,
-                    cap = drawingPath.strokeCap,
-                    join = drawingPath.strokeJoin
+            if (drawingPath.points.isNotEmpty()) {
+                drawPath(
+                    path = drawingPath.toPath(),
+                    color = drawingPath.color,
+                    style = Stroke(
+                        width = drawingPath.strokeWidth,
+                        cap = drawingPath.strokeCap,
+                        join = drawingPath.strokeJoin
+                    )
                 )
-            )
+            }
         }
         
         // Draw current path being drawn
         currentDrawingPath?.let { drawingPath ->
-            drawPath(
-                path = drawingPath.path,
-                color = drawingPath.color,
-                style = Stroke(
-                    width = drawingPath.strokeWidth,
-                    cap = drawingPath.strokeCap,
-                    join = drawingPath.strokeJoin
+            if (drawingPath.points.isNotEmpty()) {
+                drawPath(
+                    path = drawingPath.toPath(),
+                    color = drawingPath.color,
+                    style = Stroke(
+                        width = drawingPath.strokeWidth,
+                        cap = drawingPath.strokeCap,
+                        join = drawingPath.strokeJoin
+                    )
                 )
-            )
+            }
         }
         
         // Draw all shapes
