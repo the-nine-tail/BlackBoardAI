@@ -3,6 +3,7 @@ package com.example.blackboardai.data.ai
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.google.mediapipe.framework.image.BitmapExtractor
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -66,6 +68,7 @@ class GoogleAIService @Inject constructor(
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelFile.absolutePath)
                 .setMaxTokens(2048)
+                .setPreferredBackend(LlmInference.Backend.GPU)
                 .setMaxNumImages(1)
                 .build()
             
@@ -198,14 +201,25 @@ class GoogleAIService @Inject constructor(
                     // Convert Bitmap to MPImage for MediaPipe
                     val mpImage: MPImage = BitmapImageBuilder(imageBitmap).build()
                     Log.d(TAG, "✅ Image converted to MPImage successfully")
+                    Log.d(TAG, "📊 MPImage details: width=${mpImage.width}, height=${mpImage.height}")
+                    
+                    // Save original bitmap and MPImage for inspection
+                    saveBitmapToDevice(imageBitmap, "original_bitmap_${System.currentTimeMillis()}.png")
+                    saveMPImageToDevice(mpImage, "converted_mpimage_${System.currentTimeMillis()}.png")
+                    
+                    // Analyze bitmap pixels to detect blank issues
+                    val pixelAnalysis = analyzeBitmapPixels(imageBitmap)
+                    Log.d(TAG, "🔍 Original bitmap analysis: $pixelAnalysis")
+
+                    // Then add text prompt
+                    session.addQueryChunk(prompt)
+                    Log.d(TAG, "📝 Text prompt added to session")
                     
                     // Add image first (recommended by MediaPipe docs)
                     session.addImage(mpImage)
                     Log.d(TAG, "🖼️ Image added to session")
                     
-                    // Then add text prompt
-                    session.addQueryChunk(prompt)
-                    Log.d(TAG, "📝 Text prompt added to session")
+                    
                     
                     // Generate response asynchronously
                     session.generateResponseAsync { partialResult, done ->
@@ -316,5 +330,73 @@ class GoogleAIService @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "💥 Cleanup failed: ${e.message}")
         }
+    }
+    
+    /**
+     * Save bitmap to device storage for inspection
+     */
+    private fun saveBitmapToDevice(bitmap: android.graphics.Bitmap, filename: String) {
+        try {
+            // Save to external files directory (accessible via file manager)
+            val externalDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+            
+                         if (externalDir != null) {
+                 val file = File(externalDir, filename)
+                 val outputStream = FileOutputStream(file)
+                
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
+                outputStream.close()
+                
+                Log.d(TAG, "💾 Bitmap saved to: ${file.absolutePath}")
+            } else {
+                Log.w(TAG, "⚠️ External storage not available for saving bitmap")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 Error saving bitmap: ${e.message}")
+        }
+    }
+    
+    /**
+     * Save MPImage to device storage for inspection
+     */
+         private fun saveMPImageToDevice(mpImage: MPImage, filename: String) {
+         try {
+             // Convert MPImage back to bitmap for saving
+             val bitmap = BitmapExtractor.extract(mpImage)
+             saveBitmapToDevice(bitmap, "mp_$filename")
+             
+             Log.d(TAG, "💾 MPImage saved as bitmap: mp_$filename")
+         } catch (e: Exception) {
+             Log.e(TAG, "💥 Error saving MPImage: ${e.message}")
+         }
+     }
+    
+    /**
+     * Analyze bitmap pixels to detect if it's blank
+     */
+    private fun analyzeBitmapPixels(bitmap: android.graphics.Bitmap): String {
+        val width = bitmap.width
+        val height = bitmap.height
+        val totalPixels = width * height
+        
+        var whitePixels = 0
+        var nonWhitePixels = 0
+        var transparentPixels = 0
+        
+        // Sample pixels (check every 10th pixel to avoid performance issues)
+        for (y in 0 until height step 10) {
+            for (x in 0 until width step 10) {
+                val pixel = bitmap.getPixel(x, y)
+                when {
+                    pixel == android.graphics.Color.WHITE -> whitePixels++
+                    pixel == android.graphics.Color.TRANSPARENT -> transparentPixels++
+                    else -> nonWhitePixels++
+                }
+            }
+        }
+        
+        val sampledPixels = whitePixels + nonWhitePixels + transparentPixels
+        
+        return "sampled:$sampledPixels, white:$whitePixels, nonWhite:$nonWhitePixels, transparent:$transparentPixels"
     }
 } 

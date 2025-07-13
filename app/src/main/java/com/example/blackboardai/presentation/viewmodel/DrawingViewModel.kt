@@ -1,5 +1,6 @@
 package com.example.blackboardai.presentation.viewmodel
 
+import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.lifecycle.ViewModel
@@ -16,6 +17,7 @@ import com.example.blackboardai.domain.usecase.GetNoteByIdUseCase
 import com.example.blackboardai.domain.usecase.SaveNoteUseCase
 import com.example.blackboardai.data.ai.GoogleAIService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +30,8 @@ import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.max
 import android.util.Log
+import java.io.File
+import java.io.FileOutputStream
 
 // Serializable data classes for drawing data
 data class SerializableDrawingData(
@@ -73,7 +77,8 @@ data class SerializablePoint(
 class DrawingViewModel @Inject constructor(
     private val saveNoteUseCase: SaveNoteUseCase,
     private val getNoteByIdUseCase: GetNoteByIdUseCase,
-    private val googleAIService: GoogleAIService
+    private val googleAIService: GoogleAIService,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(DrawingUiState())
@@ -204,6 +209,9 @@ class DrawingViewModel @Inject constructor(
                 // Create an optimized prompt for image-based problem solving
                 val multimodalPrompt = createImageBasedSolvingPrompt()
                 Log.d("DrawingViewModel", "📝 Created multimodal prompt for Gemma")
+                
+                // Also save the exported bitmap for inspection
+                saveBitmapToDevice(drawingBitmap, "solve_request_${System.currentTimeMillis()}.png")
                 
                 // Use the new multimodal method with both image and text
                 googleAIService.generateMultimodalResponse(multimodalPrompt, drawingBitmap).collect { response ->
@@ -457,16 +465,58 @@ class DrawingViewModel @Inject constructor(
     // Helper functions for future Gemma AI integration
     
     /**
-     * Export drawing as bitmap for AI processing
-     * This will be useful when integrating with Gemma model
+     * Export drawing as bitmap for AI processing with comprehensive debugging
      */
     fun exportDrawingAsBitmap(width: Int = 1024, height: Int = 1024): android.graphics.Bitmap? {
-        try {
-            val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        return try {
+            val startTime = System.currentTimeMillis()
+            Log.d("DrawingViewModel", "🎨 === BITMAP EXPORT START ===")
+            
+            // Log drawing content analysis
+            Log.d("DrawingViewModel", "📊 Drawing content analysis:")
+            Log.d("DrawingViewModel", "   - Paths: ${_uiState.value.drawingPaths.size}")
+            Log.d("DrawingViewModel", "   - Shapes: ${_uiState.value.shapes.size}")
+            Log.d("DrawingViewModel", "   - Text elements: ${_uiState.value.textElements.size}")
+            
+            // Validate drawing content
+            if (_uiState.value.drawingPaths.isEmpty() && 
+                _uiState.value.shapes.isEmpty() && 
+                _uiState.value.textElements.isEmpty()) {
+                Log.w("DrawingViewModel", "⚠️ No drawing content found! Bitmap will be blank.")
+                return null
+            }
+            
+            // Create bitmap with proper configuration
+            val bitmap = android.graphics.Bitmap.createBitmap(
+                width, 
+                height, 
+                android.graphics.Bitmap.Config.ARGB_8888
+            )
             val canvas = android.graphics.Canvas(bitmap)
             
             // Fill with white background
             canvas.drawColor(android.graphics.Color.WHITE)
+            Log.d("DrawingViewModel", "✅ Canvas created: ${width}x${height}, white background applied")
+            
+            // Calculate coordinate bounds for scaling
+            val bounds = calculateDrawingBounds()
+            Log.d("DrawingViewModel", "📏 Drawing bounds: ${bounds}")
+            
+                         // Calculate scaling factors
+             val scaleX = if (bounds.width() > 0) (width * 0.9f) / bounds.width() else 1f
+             val scaleY = if (bounds.height() > 0) (height * 0.9f) / bounds.height() else 1f
+             val scale = minOf(scaleX, scaleY)
+             
+             // Calculate offset to center the drawing
+             val offsetX = (width - bounds.width() * scale) / 2 - bounds.left * scale
+             val offsetY = (height - bounds.height() * scale) / 2 - bounds.top * scale
+            
+            Log.d("DrawingViewModel", "🔧 Scaling: scale=$scale, offset=(${offsetX}, ${offsetY})")
+            
+            // Apply transformation
+            canvas.save()
+            canvas.translate(offsetX, offsetY)
+            canvas.scale(scale, scale)
             
             val paint = android.graphics.Paint().apply {
                 isAntiAlias = true
@@ -475,57 +525,253 @@ class DrawingViewModel @Inject constructor(
                 strokeJoin = android.graphics.Paint.Join.ROUND
             }
             
-            // Draw all paths
-            _uiState.value.drawingPaths.forEach { drawingPath ->
+            var elementsDrawn = 0
+            
+            // Draw all paths with detailed logging
+            _uiState.value.drawingPaths.forEachIndexed { index, drawingPath ->
                 if (drawingPath.points.isNotEmpty()) {
-                    paint.color = drawingPath.color.value.toInt()
-                    paint.strokeWidth = drawingPath.strokeWidth
-                    
-                    val path = android.graphics.Path()
-                    path.moveTo(drawingPath.points.first().x, drawingPath.points.first().y)
-                    drawingPath.points.drop(1).forEach { point ->
-                        path.lineTo(point.x, point.y)
+                    try {
+                        // Convert Compose Color to Android Color properly
+                        val androidColor = convertComposeColorToAndroid(drawingPath.color)
+                        paint.color = androidColor
+                        paint.strokeWidth = drawingPath.strokeWidth
+                        
+                        // Handle eraser mode
+                        if (drawingPath.isEraser) {
+                            paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+                        } else {
+                            paint.xfermode = null
+                        }
+                        
+                        val path = android.graphics.Path()
+                        path.moveTo(drawingPath.points.first().x, drawingPath.points.first().y)
+                        drawingPath.points.drop(1).forEach { point ->
+                            path.lineTo(point.x, point.y)
+                        }
+                        canvas.drawPath(path, paint)
+                        elementsDrawn++
+                        
+                        Log.d("DrawingViewModel", "✏️ Path $index: ${drawingPath.points.size} points, " +
+                                "color=#${Integer.toHexString(androidColor)}, " +
+                                "strokeWidth=${drawingPath.strokeWidth}, " +
+                                "isEraser=${drawingPath.isEraser}")
+                    } catch (e: Exception) {
+                        Log.e("DrawingViewModel", "💥 Error drawing path $index: ${e.message}")
                     }
-                    canvas.drawPath(path, paint)
                 }
             }
             
-            // Draw all shapes
-            _uiState.value.shapes.forEach { shape ->
-                paint.color = shape.color.value.toInt()
-                paint.strokeWidth = shape.strokeWidth
-                
-                when (shape.type) {
-                    ShapeType.RECTANGLE -> {
-                        canvas.drawRect(
-                            min(shape.startX, shape.endX),
-                            min(shape.startY, shape.endY),
-                            max(shape.startX, shape.endX),
-                            max(shape.startY, shape.endY),
-                            paint
-                        )
+            // Reset xfermode for shapes and text
+            paint.xfermode = null
+            
+            // Draw all shapes with detailed logging
+            _uiState.value.shapes.forEachIndexed { index, shape ->
+                try {
+                    val androidColor = convertComposeColorToAndroid(shape.color)
+                    paint.color = androidColor
+                    paint.strokeWidth = shape.strokeWidth
+                    paint.style = if (shape.filled) android.graphics.Paint.Style.FILL else android.graphics.Paint.Style.STROKE
+                    
+                    when (shape.type) {
+                        ShapeType.RECTANGLE -> {
+                            canvas.drawRect(
+                                minOf(shape.startX, shape.endX),
+                                minOf(shape.startY, shape.endY),
+                                maxOf(shape.startX, shape.endX),
+                                maxOf(shape.startY, shape.endY),
+                                paint
+                            )
+                        }
+                        ShapeType.CIRCLE -> {
+                            val centerX = (shape.startX + shape.endX) / 2
+                            val centerY = (shape.startY + shape.endY) / 2
+                            val radius = sqrt(
+                                (shape.endX - shape.startX).toDouble().pow(2.0) +
+                                (shape.endY - shape.startY).toDouble().pow(2.0)
+                            ).toFloat() / 2
+                            canvas.drawCircle(centerX, centerY, radius, paint)
+                        }
+                        ShapeType.LINE -> {
+                            canvas.drawLine(shape.startX, shape.startY, shape.endX, shape.endY, paint)
+                        }
                     }
-                    ShapeType.CIRCLE -> {
-                        val centerX = (shape.startX + shape.endX) / 2
-                        val centerY = (shape.startY + shape.endY) / 2
-                        val radius = sqrt(
-                            (shape.endX - shape.startX).toDouble().pow(2.0) +
-                            (shape.endY - shape.startY).toDouble().pow(2.0)
-                        ).toFloat() / 2
-                        canvas.drawCircle(centerX, centerY, radius, paint)
-                    }
-                    ShapeType.LINE -> {
-                        canvas.drawLine(shape.startX, shape.startY, shape.endX, shape.endY, paint)
-                    }
+                    elementsDrawn++
+                    
+                    Log.d("DrawingViewModel", "🔸 Shape $index: ${shape.type}, " +
+                            "bounds=(${shape.startX},${shape.startY})-(${shape.endX},${shape.endY}), " +
+                            "color=#${Integer.toHexString(androidColor)}, " +
+                            "strokeWidth=${shape.strokeWidth}, filled=${shape.filled}")
+                } catch (e: Exception) {
+                    Log.e("DrawingViewModel", "💥 Error drawing shape $index: ${e.message}")
                 }
             }
+            
+            // Draw all text elements with detailed logging
+            _uiState.value.textElements.forEachIndexed { index, textElement ->
+                try {
+                    val androidColor = convertComposeColorToAndroid(textElement.color)
+                    paint.color = androidColor
+                    paint.style = android.graphics.Paint.Style.FILL
+                    paint.textSize = textElement.fontSize
+                    paint.strokeWidth = 0f
+                    
+                    canvas.drawText(textElement.text, textElement.x, textElement.y, paint)
+                    elementsDrawn++
+                    
+                    Log.d("DrawingViewModel", "📝 Text $index: '${textElement.text}' " +
+                            "at (${textElement.x},${textElement.y}), " +
+                            "color=#${Integer.toHexString(androidColor)}, " +
+                            "fontSize=${textElement.fontSize}")
+                } catch (e: Exception) {
+                    Log.e("DrawingViewModel", "💥 Error drawing text $index: ${e.message}")
+                }
+            }
+            
+            canvas.restore()
+            
+            val exportTime = System.currentTimeMillis() - startTime
+            Log.d("DrawingViewModel", "✅ Bitmap export completed in ${exportTime}ms")
+            Log.d("DrawingViewModel", "📊 Total elements drawn: $elementsDrawn")
+            
+            // Analyze bitmap for blank detection
+            val pixelAnalysis = analyzeBitmapPixels(bitmap)
+            Log.d("DrawingViewModel", "🔍 Pixel analysis: $pixelAnalysis")
+            
+            // Save bitmap to device for inspection
+            saveBitmapToDevice(bitmap, "exported_drawing_${System.currentTimeMillis()}.png")
             
             return bitmap
+            
         } catch (e: Exception) {
-            println("Error exporting bitmap: ${e.message}")
+            Log.e("DrawingViewModel", "💥 Error exporting bitmap: ${e.message}")
+            e.printStackTrace()
             return null
         }
     }
+    
+    /**
+     * Calculate the bounds of all drawing elements
+     */
+    private fun calculateDrawingBounds(): android.graphics.RectF {
+        val bounds = android.graphics.RectF()
+        var hasContent = false
+        
+        // Include all path points
+        _uiState.value.drawingPaths.forEach { path ->
+            path.points.forEach { point ->
+                if (!hasContent) {
+                    bounds.set(point.x, point.y, point.x, point.y)
+                    hasContent = true
+                } else {
+                    bounds.union(point.x, point.y)
+                }
+            }
+        }
+        
+        // Include all shapes
+        _uiState.value.shapes.forEach { shape ->
+            val left = minOf(shape.startX, shape.endX)
+            val top = minOf(shape.startY, shape.endY)
+            val right = maxOf(shape.startX, shape.endX)
+            val bottom = maxOf(shape.startY, shape.endY)
+            
+            if (!hasContent) {
+                bounds.set(left, top, right, bottom)
+                hasContent = true
+            } else {
+                bounds.union(left, top, right, bottom)
+            }
+        }
+        
+        // Include all text elements
+        _uiState.value.textElements.forEach { text ->
+            if (!hasContent) {
+                bounds.set(text.x, text.y, text.x, text.y)
+                hasContent = true
+            } else {
+                bounds.union(text.x, text.y)
+            }
+        }
+        
+        // Add padding
+        if (hasContent) {
+            bounds.inset(-50f, -50f)
+        }
+        
+        return bounds
+    }
+    
+         /**
+      * Convert Compose Color to Android Color properly
+      */
+     private fun convertComposeColorToAndroid(composeColor: Color): Int {
+         val colorValue = composeColor.value
+         return when {
+             // Handle standard colors
+             (colorValue.toLong() and 0xFF000000L) == 0xFF000000L -> {
+                 // Color has alpha channel, use as-is
+                 colorValue.toLong().toInt()
+             }
+             else -> {
+                 // Add full alpha if missing
+                 (0xFF000000L or (colorValue.toLong() and 0xFFFFFFL)).toInt()
+             }
+         }
+     }
+    
+    /**
+     * Analyze bitmap pixels to detect if it's blank
+     */
+    private fun analyzeBitmapPixels(bitmap: android.graphics.Bitmap): String {
+        val width = bitmap.width
+        val height = bitmap.height
+        val totalPixels = width * height
+        
+        var whitePixels = 0
+        var nonWhitePixels = 0
+        var transparentPixels = 0
+        
+        // Sample pixels (check every 10th pixel to avoid performance issues)
+        for (y in 0 until height step 10) {
+            for (x in 0 until width step 10) {
+                val pixel = bitmap.getPixel(x, y)
+                when {
+                    pixel == android.graphics.Color.WHITE -> whitePixels++
+                    pixel == android.graphics.Color.TRANSPARENT -> transparentPixels++
+                    else -> nonWhitePixels++
+                }
+            }
+        }
+        
+        val sampledPixels = whitePixels + nonWhitePixels + transparentPixels
+        
+        return "sampled:$sampledPixels, white:$whitePixels, nonWhite:$nonWhitePixels, transparent:$transparentPixels"
+    }
+    
+         /**
+      * Save bitmap to device storage for inspection
+      */
+     private fun saveBitmapToDevice(bitmap: android.graphics.Bitmap, filename: String) {
+         try {
+             // Save to external files directory (accessible via file manager)
+             val externalDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+             
+             if (externalDir != null) {
+                 val file = File(externalDir, filename)
+                 val outputStream = FileOutputStream(file)
+                 
+                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
+                 outputStream.close()
+                 
+                 Log.d("DrawingViewModel", "💾 Bitmap saved to: ${file.absolutePath}")
+             } else {
+                 Log.w("DrawingViewModel", "⚠️ External storage not available for saving bitmap")
+             }
+         } catch (e: Exception) {
+             Log.e("DrawingViewModel", "💥 Error saving bitmap: ${e.message}")
+         }
+     }
+    
     
     /**
      * Export drawing as SVG for AI processing and web compatibility
