@@ -103,12 +103,20 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
     
-    // Google AI Edge SDK
+    // Google AI Edge SDK (for local models)
     implementation("com.google.mediapipe:tasks-genai:0.10.25")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
     // MediaPipe Framework for image processing
     implementation("com.google.mediapipe:tasks-vision:0.20230731")
+    
+    // HTTP client for Google AI Studio API
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    
+    // Rich text rendering for AI responses
+    implementation("androidx.compose.ui:ui-text:1.5.4")
     
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

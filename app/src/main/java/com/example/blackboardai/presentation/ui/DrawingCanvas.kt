@@ -37,6 +37,7 @@ fun DrawingCanvas(
     onAddPath: (DrawingPath) -> Unit,
     onAddShape: (DrawingShape) -> Unit,
     onAddText: (TextElement) -> Unit,
+    onErasePath: (DrawingPath) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var currentPoints by remember { mutableStateOf<List<DrawingPoint>>(emptyList()) }
@@ -45,8 +46,8 @@ fun DrawingCanvas(
     var endPoint by remember { mutableStateOf<Offset?>(null) }
     var isDrawing by remember { mutableStateOf(false) }
     
-    // Force recomposition trigger for real-time drawing
-    var pathUpdateTrigger by remember { mutableStateOf(0) }
+    // More efficient recomposition trigger
+    var drawingRevision by remember { mutableStateOf(0) }
     
     val density = LocalDensity.current
     
@@ -61,30 +62,27 @@ fun DrawingCanvas(
                         when (drawingMode) {
                             DrawingMode.DRAW, DrawingMode.ERASE -> {
                                 // Start new path with initial point
-                                currentPoints = listOf(
-                                    DrawingPoint(
-                                        x = offset.x,
-                                        y = offset.y,
-                                        pressure = 1f,
-                                        timestamp = System.currentTimeMillis()
-                                    )
+                                val initialPoint = DrawingPoint(
+                                    x = offset.x,
+                                    y = offset.y,
+                                    pressure = 1f,
+                                    timestamp = System.currentTimeMillis()
                                 )
+                                currentPoints = listOf(initialPoint)
                                 currentDrawingPath = DrawingPath(
                                     points = currentPoints,
-                                    color = if (drawingMode == DrawingMode.ERASE) Color.White else currentColor,
+                                    color = if (drawingMode == DrawingMode.ERASE) Color.Transparent else currentColor,
                                     strokeWidth = strokeWidth,
                                     isEraser = drawingMode == DrawingMode.ERASE
                                 )
                                 isDrawing = true
-                                // Trigger initial recomposition
-                                pathUpdateTrigger++
+                                drawingRevision++
                             }
                             DrawingMode.SHAPE -> {
                                 startPoint = offset
                                 endPoint = offset
                                 isDrawing = true
-                                // Trigger initial recomposition for shape preview
-                                pathUpdateTrigger++
+                                drawingRevision++
                             }
                             DrawingMode.TEXT -> {
                                 // Text input handling would be done separately
@@ -100,33 +98,44 @@ fun DrawingCanvas(
                             }
                         }
                     },
-                    onDrag = { change, _ ->
+                    onDrag = { change, dragAmount ->
                         when (drawingMode) {
                             DrawingMode.DRAW, DrawingMode.ERASE -> {
                                 if (isDrawing) {
-                                    // Add new point to current path
+                                    // Add new point with better distance filtering
                                     val newPoint = DrawingPoint(
                                         x = change.position.x,
                                         y = change.position.y,
                                         pressure = 1f,
                                         timestamp = System.currentTimeMillis()
                                     )
-                                    currentPoints = currentPoints + newPoint
-                                    currentDrawingPath = DrawingPath(
-                                        points = currentPoints,
-                                        color = if (drawingMode == DrawingMode.ERASE) Color.White else currentColor,
-                                        strokeWidth = strokeWidth,
-                                        isEraser = drawingMode == DrawingMode.ERASE
-                                    )
-                                    // Trigger recomposition for real-time drawing
-                                    pathUpdateTrigger++
+                                    
+                                    // Only add point if it's far enough from the last point for smoother lines
+                                    val lastPoint = currentPoints.lastOrNull()
+                                    val shouldAddPoint = lastPoint == null || run {
+                                        val distance = kotlin.math.sqrt(
+                                            (newPoint.x - lastPoint.x) * (newPoint.x - lastPoint.x) +
+                                            (newPoint.y - lastPoint.y) * (newPoint.y - lastPoint.y)
+                                        )
+                                        distance >= 1f // Minimum distance threshold for smoother lines (reduced for better sensitivity)
+                                    }
+                                    
+                                    if (shouldAddPoint) {
+                                        currentPoints = currentPoints + newPoint
+                                        currentDrawingPath = DrawingPath(
+                                            points = currentPoints,
+                                            color = if (drawingMode == DrawingMode.ERASE) Color.Transparent else currentColor,
+                                            strokeWidth = strokeWidth,
+                                            isEraser = drawingMode == DrawingMode.ERASE
+                                        )
+                                        drawingRevision++
+                                    }
                                 }
                             }
                             DrawingMode.SHAPE -> {
                                 if (isDrawing) {
                                     endPoint = change.position
-                                    // Trigger recomposition for real-time shape preview
-                                    pathUpdateTrigger++
+                                    drawingRevision++
                                 }
                             }
                             else -> {}
@@ -134,9 +143,18 @@ fun DrawingCanvas(
                     },
                     onDragEnd = {
                         when (drawingMode) {
-                            DrawingMode.DRAW, DrawingMode.ERASE -> {
+                            DrawingMode.DRAW -> {
                                 currentDrawingPath?.let { drawingPath ->
                                     onAddPath(drawingPath)
+                                }
+                                currentDrawingPath = null
+                                isDrawing = false
+                                // Reset the points for next drawing
+                                currentPoints = emptyList()
+                            }
+                            DrawingMode.ERASE -> {
+                                currentDrawingPath?.let { drawingPath ->
+                                    onErasePath(drawingPath)
                                 }
                                 currentDrawingPath = null
                                 isDrawing = false
@@ -169,14 +187,15 @@ fun DrawingCanvas(
                 )
             }
     ) {
-        // Use pathUpdateTrigger to force recomposition for real-time drawing
-        pathUpdateTrigger
+        // Use drawingRevision to trigger recomposition efficiently
+        drawingRevision
         
-        // Draw all completed paths
+        // Draw all completed paths (skip eraser paths - they're for removal only)
         paths.forEach { drawingPath ->
-            if (drawingPath.points.isNotEmpty()) {
+            if (drawingPath.points.isNotEmpty() && !drawingPath.isEraser) {
+                val path = drawingPath.toPath()
                 drawPath(
-                    path = drawingPath.toPath(),
+                    path = path,
                     color = drawingPath.color,
                     style = Stroke(
                         width = drawingPath.strokeWidth,
@@ -187,18 +206,30 @@ fun DrawingCanvas(
             }
         }
         
-        // Draw current path being drawn
+        // Draw current path being drawn (show eraser as semi-transparent circle)
         currentDrawingPath?.let { drawingPath ->
             if (drawingPath.points.isNotEmpty()) {
-                drawPath(
-                    path = drawingPath.toPath(),
-                    color = drawingPath.color,
-                    style = Stroke(
-                        width = drawingPath.strokeWidth,
-                        cap = drawingPath.strokeCap,
-                        join = drawingPath.strokeJoin
+                if (drawingPath.isEraser) {
+                    // Show eraser indicator as semi-transparent circles
+                    drawingPath.points.forEach { point ->
+                        drawCircle(
+                            color = Color.Red.copy(alpha = 0.3f),
+                            radius = drawingPath.strokeWidth / 2,
+                            center = Offset(point.x, point.y)
+                        )
+                    }
+                } else {
+                    // Draw normal path
+                    drawPath(
+                        path = drawingPath.toPath(),
+                        color = drawingPath.color,
+                        style = Stroke(
+                            width = drawingPath.strokeWidth,
+                            cap = drawingPath.strokeCap,
+                            join = drawingPath.strokeJoin
+                        )
                     )
-                )
+                }
             }
         }
         

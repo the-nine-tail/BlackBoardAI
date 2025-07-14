@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import javax.inject.Inject
 import kotlin.math.pow
@@ -118,6 +119,142 @@ class DrawingViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(drawingPaths = currentPaths)
     }
     
+    fun erasePath(eraserPath: DrawingPath) {
+        val currentPaths = _uiState.value.drawingPaths.toMutableList()
+        val currentShapes = _uiState.value.shapes.toMutableList()
+        
+        // Remove paths that intersect with the eraser path
+        val remainingPaths = currentPaths.filter { drawingPath ->
+            !pathsIntersect(drawingPath, eraserPath)
+        }
+        
+        // Remove shapes that intersect with the eraser path
+        val remainingShapes = currentShapes.filter { shape ->
+            !shapeIntersectsWithPath(shape, eraserPath)
+        }
+        
+        _uiState.value = _uiState.value.copy(
+            drawingPaths = remainingPaths,
+            shapes = remainingShapes
+        )
+    }
+    
+    private fun pathsIntersect(path1: DrawingPath, eraserPath: DrawingPath): Boolean {
+        if (path1.points.isEmpty() || eraserPath.points.isEmpty()) return false
+        
+        val eraserRadius = eraserPath.strokeWidth / 2
+        
+        // Check if any point in path1 is within eraser radius of any eraser point
+        for (point1 in path1.points) {
+            for (eraserPoint in eraserPath.points) {
+                val distance = sqrt(
+                    (point1.x - eraserPoint.x).toDouble().pow(2.0) +
+                    (point1.y - eraserPoint.y).toDouble().pow(2.0)
+                ).toFloat()
+                
+                if (distance <= eraserRadius + path1.strokeWidth / 2) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    private fun shapeIntersectsWithPath(shape: DrawingShape, eraserPath: DrawingPath): Boolean {
+        if (eraserPath.points.isEmpty()) return false
+        
+        val eraserRadius = eraserPath.strokeWidth / 2
+        
+        // Check if any eraser point intersects with the shape
+        for (eraserPoint in eraserPath.points) {
+            when (shape.type) {
+                ShapeType.LINE -> {
+                    // Check distance from point to line segment
+                    val distance = distanceFromPointToLineSegment(
+                        eraserPoint.x, eraserPoint.y,
+                        shape.startX, shape.startY,
+                        shape.endX, shape.endY
+                    )
+                    if (distance <= eraserRadius + shape.strokeWidth / 2) {
+                        return true
+                    }
+                }
+                ShapeType.RECTANGLE -> {
+                    // Check if point is inside or near rectangle
+                    val left = min(shape.startX, shape.endX) - shape.strokeWidth / 2
+                    val right = max(shape.startX, shape.endX) + shape.strokeWidth / 2
+                    val top = min(shape.startY, shape.endY) - shape.strokeWidth / 2
+                    val bottom = max(shape.startY, shape.endY) + shape.strokeWidth / 2
+                    
+                    if (eraserPoint.x >= left - eraserRadius && eraserPoint.x <= right + eraserRadius &&
+                        eraserPoint.y >= top - eraserRadius && eraserPoint.y <= bottom + eraserRadius) {
+                        return true
+                    }
+                }
+                ShapeType.CIRCLE -> {
+                    // Check distance from eraser point to circle center
+                    val centerX = (shape.startX + shape.endX) / 2
+                    val centerY = (shape.startY + shape.endY) / 2
+                    val circleRadius = sqrt(
+                        (shape.endX - shape.startX).toDouble().pow(2.0) +
+                        (shape.endY - shape.startY).toDouble().pow(2.0)
+                    ).toFloat() / 2
+                    
+                    val distance = sqrt(
+                        (eraserPoint.x - centerX).toDouble().pow(2.0) +
+                        (eraserPoint.y - centerY).toDouble().pow(2.0)
+                    ).toFloat()
+                    
+                    if (distance <= eraserRadius + circleRadius + shape.strokeWidth / 2) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+    
+    private fun distanceFromPointToLineSegment(
+        px: Float, py: Float,
+        x1: Float, y1: Float, 
+        x2: Float, y2: Float
+    ): Float {
+        val A = px - x1
+        val B = py - y1
+        val C = x2 - x1
+        val D = y2 - y1
+        
+        val dot = A * C + B * D
+        val lenSq = C * C + D * D
+        
+        var param = -1f
+        if (lenSq != 0f) {
+            param = dot / lenSq
+        }
+        
+        val xx: Float
+        val yy: Float
+        
+        when {
+            param < 0 -> {
+                xx = x1
+                yy = y1
+            }
+            param > 1 -> {
+                xx = x2
+                yy = y2
+            }
+            else -> {
+                xx = x1 + param * C
+                yy = y1 + param * D
+            }
+        }
+        
+        val dx = px - xx
+        val dy = py - yy
+        return sqrt(dx * dx + dy * dy)
+    }
+    
     fun addShape(shape: DrawingShape) {
         val currentShapes = _uiState.value.shapes.toMutableList()
         currentShapes.add(shape)
@@ -191,9 +328,9 @@ class DrawingViewModel @Inject constructor(
                     return@launch
                 }
                 
-                // Export drawing as bitmap for AI analysis
+                // Export drawing as bitmap for AI analysis - use smaller size to reduce token usage
                 Log.d("DrawingViewModel", "🎨 Exporting drawing as bitmap for AI analysis...")
-                val drawingBitmap = exportDrawingAsBitmap(1024, 1024)
+                val drawingBitmap = exportDrawingAsBitmap(512, 512) // Reduced from 1024x1024 to save tokens
                 
                 if (drawingBitmap == null) {
                     _uiState.value = _uiState.value.copy(
@@ -208,19 +345,84 @@ class DrawingViewModel @Inject constructor(
                 
                 // Create an optimized prompt for image-based problem solving
                 val multimodalPrompt = createImageBasedSolvingPrompt()
+                
+                // Estimate token usage for debugging
+                val promptTokens = estimateTokenCount(multimodalPrompt)
+                val imageTokens = estimateImageTokenCount(drawingBitmap.width, drawingBitmap.height)
+                val totalEstimatedTokens = promptTokens + imageTokens
+                
                 Log.d("DrawingViewModel", "📝 Created multimodal prompt for Gemma")
+                Log.d("DrawingViewModel", "🔢 Token estimation:")
+                Log.d("DrawingViewModel", "   - Prompt tokens: ~$promptTokens")
+                Log.d("DrawingViewModel", "   - Image tokens: ~$imageTokens (${drawingBitmap.width}x${drawingBitmap.height})")
+                Log.d("DrawingViewModel", "   - Total estimated: ~$totalEstimatedTokens / 4096")
+                Log.d("DrawingViewModel", "   - Remaining for response: ~${4096 - totalEstimatedTokens}")
                 
-                // Also save the exported bitmap for inspection
-                saveBitmapToDevice(drawingBitmap, "solve_request_${System.currentTimeMillis()}.png")
+                if (totalEstimatedTokens > 3800) {
+                    Log.w("DrawingViewModel", "⚠️ High token usage! May exceed limit during generation.")
+                }
                 
-                // Use the new multimodal method with both image and text
-                googleAIService.generateMultimodalResponse(multimodalPrompt, drawingBitmap).collect { response ->
+
+                
+                // Use the new streaming multimodal method with simplified prompt to prevent loops
+                var responseLength = 0
+                val maxResponseLength = 8000 // Increased limit to match 4096 token capacity
+                var isStreamingComplete = false
+                
+                try {
+                    // Add timeout to prevent hanging
+                    val streamingResult = withTimeoutOrNull(1800000) { // 3 minute timeout
+                        googleAIService.generateMultimodalResponse(multimodalPrompt, drawingBitmap).collect { streamingResponse ->
+                            responseLength = streamingResponse.length
+                            
+                            // Stop if response gets too long (prevents infinite loops)
+                            if (responseLength > maxResponseLength) {
+                                Log.w("DrawingViewModel", "⚠️ Response too long (${responseLength} chars), stopping stream")
+                                _uiState.value = _uiState.value.copy(
+                                    isSolving = false,
+                                    aiSolution = streamingResponse.take(maxResponseLength) + "\n\n*[Response truncated to prevent excessive length]*",
+                                    showSolution = true
+                                )
+                                isStreamingComplete = true
+                                return@collect
+                            }
+                            
+                            // Update UI with each streaming chunk - keep isSolving true while streaming
+                            _uiState.value = _uiState.value.copy(
+                                isSolving = true, // Keep true while streaming
+                                aiSolution = streamingResponse,
+                                showSolution = true
+                            )
+                            Log.d("DrawingViewModel", "📤 Streaming AI response: ${streamingResponse.length} chars")
+                        }
+                        
+                        // Mark as complete when flow finishes naturally
+                        isStreamingComplete = true
+                        Log.d("DrawingViewModel", "✅ Streaming complete, final response length: $responseLength chars")
+                    }
+                    
+                    // Handle timeout or completion
+                    if (streamingResult == null) {
+                        Log.w("DrawingViewModel", "⚠️ AI response timed out after 3 minutes")
+                        _uiState.value = _uiState.value.copy(
+                            isSolving = false,
+                            aiSolution = "## Timeout\nThe AI response took too long and was stopped. Please try again with a simpler problem.",
+                            showSolution = true
+                        )
+                    } else {
+                        // Streaming completed successfully - set isSolving to false
+                        Log.d("DrawingViewModel", "🎉 AI response streaming completed successfully")
+                        _uiState.value = _uiState.value.copy(
+                            isSolving = false
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("DrawingViewModel", "💥 Error in streaming flow: ${e.message}")
                     _uiState.value = _uiState.value.copy(
                         isSolving = false,
-                        aiSolution = response,
+                        aiSolution = "Error during streaming: ${e.message}",
                         showSolution = true
                     )
-                    Log.d("DrawingViewModel", "🎉 Received multimodal AI response: ${response.length} chars")
                 }
                 
             } catch (e: Exception) {
@@ -354,7 +556,7 @@ class DrawingViewModel @Inject constructor(
                                 timestamp = point.timestamp
                             )
                         },
-                        colorHex = colorToHex(drawingPath.color),
+                        colorHex = if (drawingPath.isEraser) "#TRANSPARENT" else colorToHex(drawingPath.color),
                         strokeWidth = drawingPath.strokeWidth,
                         isEraser = drawingPath.isEraser
                     )
@@ -414,7 +616,7 @@ class DrawingViewModel @Inject constructor(
                                     timestamp = point.timestamp
                                 )
                             },
-                            color = hexToColor(serializablePath.colorHex),
+                            color = if (serializablePath.isEraser) Color.Transparent else hexToColor(serializablePath.colorHex),
                             strokeWidth = serializablePath.strokeWidth,
                             isEraser = serializablePath.isEraser
                         )
@@ -456,7 +658,11 @@ class DrawingViewModel @Inject constructor(
     
     private fun hexToColor(hex: String): Color {
         return try {
-            Color(android.graphics.Color.parseColor(hex))
+            if (hex == "#TRANSPARENT") {
+                Color.Transparent
+            } else {
+                Color(android.graphics.Color.parseColor(hex))
+            }
         } catch (e: Exception) {
             Color.Black
         }
@@ -637,8 +843,7 @@ class DrawingViewModel @Inject constructor(
             val pixelAnalysis = analyzeBitmapPixels(bitmap)
             Log.d("DrawingViewModel", "🔍 Pixel analysis: $pixelAnalysis")
             
-            // Save bitmap to device for inspection
-            saveBitmapToDevice(bitmap, "exported_drawing_${System.currentTimeMillis()}.png")
+
             
             return bitmap
             
@@ -748,29 +953,7 @@ class DrawingViewModel @Inject constructor(
         return "sampled:$sampledPixels, white:$whitePixels, nonWhite:$nonWhitePixels, transparent:$transparentPixels"
     }
     
-         /**
-      * Save bitmap to device storage for inspection
-      */
-     private fun saveBitmapToDevice(bitmap: android.graphics.Bitmap, filename: String) {
-         try {
-             // Save to external files directory (accessible via file manager)
-             val externalDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
-             
-             if (externalDir != null) {
-                 val file = File(externalDir, filename)
-                 val outputStream = FileOutputStream(file)
-                 
-                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
-                 outputStream.close()
-                 
-                 Log.d("DrawingViewModel", "💾 Bitmap saved to: ${file.absolutePath}")
-             } else {
-                 Log.w("DrawingViewModel", "⚠️ External storage not available for saving bitmap")
-             }
-         } catch (e: Exception) {
-             Log.e("DrawingViewModel", "💥 Error saving bitmap: ${e.message}")
-         }
-     }
+
     
     
     /**
@@ -842,60 +1025,42 @@ class DrawingViewModel @Inject constructor(
         return (titleSize + contentSize + drawingSize).toLong()
     }
 
+    /**
+     * Estimate token count for text (rough approximation)
+     */
+    private fun estimateTokenCount(text: String): Int {
+        // Rough estimation: ~4 characters per token on average
+        return (text.length / 4).coerceAtLeast(1)
+    }
+    
+    /**
+     * Estimate token count for images based on patch-based processing
+     */
+    private fun estimateImageTokenCount(width: Int, height: Int, patchSize: Int = 16): Int {
+        // Vision transformers typically use 16x16 patches
+        val patchesX = (width + patchSize - 1) / patchSize
+        val patchesY = (height + patchSize - 1) / patchSize
+        val totalPatches = patchesX * patchesY
+        
+        // Add some overhead for special tokens (CLS, SEP, etc.)
+        return totalPatches + 10
+    }
+
     private fun createImageBasedSolvingPrompt(): String {
         return """
-            You are an expert AI tutor specializing in mathematics and physics with advanced visual analysis capabilities.
-            
-            I have drawn a mathematical or physics problem on a digital canvas. Please analyze the image I'm sharing and provide a comprehensive solution.
-            
-            **ANALYZE THE IMAGE AND:**
-            
-            1. **🔍 VISUAL ANALYSIS**: 
-               - Identify all mathematical symbols, numbers, equations, and diagrams in the image
-               - Recognize geometric shapes, graphs, charts, or physics diagrams
-               - Note any handwritten text, labels, or annotations
-               - Describe the spatial relationships between elements
-            
-            2. **🧮 PROBLEM IDENTIFICATION**: 
-               - Determine the specific type of mathematical or physics problem
-               - Identify what is being asked or what needs to be solved
-               - Recognize the domain (algebra, geometry, calculus, physics, etc.)
-            
-            3. **📖 STEP-BY-STEP SOLUTION**: 
-               - Provide a complete, detailed solution with clear steps
-               - Show all calculations and mathematical work
-               - Explain the reasoning behind each step
-               - Use proper mathematical notation in your response
-               - Highlight the final answer clearly
-            
-            4. **🎓 EDUCATIONAL EXPLANATION**: 
-               - Explain key concepts and formulas used
-               - Provide context for why certain methods were chosen
-               - Suggest alternative approaches if applicable
-               - Include memory aids or tips for similar problems
-            
-            5. **✅ VERIFICATION**: 
-               - Check your work and verify the solution makes sense
-               - Mention any assumptions made
-               - Suggest ways to double-check the answer
-            
-            **PROBLEM TYPES I CAN SOLVE:**
-            - Algebra: equations, inequalities, systems, polynomials
-            - Geometry: area, perimeter, angles, triangles, circles, 3D shapes
-            - Trigonometry: sin/cos/tan, identities, wave functions
-            - Calculus: derivatives, integrals, limits, optimization
-            - Physics: mechanics, thermodynamics, waves, electricity, magnetism
-            - Statistics: probability, distributions, data analysis
-            - Pre-calculus: functions, logarithms, exponentials
-            - Graph analysis: interpreting charts, function behavior
-            
-            **SPECIAL INSTRUCTIONS:**
-            - If the image shows a graph, analyze coordinates, slopes, and key points
-            - If it's a geometric figure, identify measurements and relationships
-            - If it's a physics setup, recognize forces, motion, or energy concepts
-            - If text is unclear, make reasonable interpretations and state your assumptions
-            
-            Please provide a thorough, educational response that helps me not just get the answer, but truly understand the problem and solution method.
+            Analyze the hand-drawn math/physics problem in the image.
+
+            Format:
+            ## Explanation
+            [Brief solution steps]
+            ## Answer  
+            [Final answer with units]
+
+            Rules: Be accurate, check units, keep under 150 words.
+
+            Examples:
+            - Triangle 3cm×4cm → Area = ½×3×4 = 6cm²
+            - Force = mass×acceleration → 2kg×3m/s² = 6N
         """.trimIndent()
     }
 }

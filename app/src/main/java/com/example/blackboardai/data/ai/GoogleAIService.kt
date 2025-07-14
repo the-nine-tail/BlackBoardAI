@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -67,7 +69,7 @@ class GoogleAIService @Inject constructor(
             
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelFile.absolutePath)
-                .setMaxTokens(2048)
+                .setMaxTokens(4096)
                 .setPreferredBackend(LlmInference.Backend.GPU)
                 .setMaxNumImages(1)
                 .build()
@@ -82,7 +84,7 @@ class GoogleAIService @Inject constructor(
             
             val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                 .setTopK(40)
-                .setTemperature(0.8f)
+                .setTemperature(0.2f)
                 .setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
                 .build()
             
@@ -176,98 +178,108 @@ class GoogleAIService @Inject constructor(
     fun isModelReady(): Boolean = isModelInitialized && llmSession != null
     
     /**
-     * Generate response with both text and image (multimodal) - Perfect for problem solving!
+     * Generate streaming response with both text and image (multimodal) - Perfect for problem solving!
      */
-    suspend fun generateMultimodalResponse(prompt: String, imageBitmap: Bitmap): Flow<String> = flow {
+    suspend fun generateMultimodalResponse(prompt: String, imageBitmap: Bitmap): Flow<String> = callbackFlow {
         val session = llmSession
         if (!isModelInitialized || session == null) {
             Log.e(TAG, "❌ Model not ready for multimodal inference")
-            emit("Model not initialized. Please wait...")
-            return@flow
+            trySend("Model not initialized. Please wait...")
+            close()
+            return@callbackFlow
         }
         
         val messageStartTime = System.currentTimeMillis()
-        Log.d(TAG, "🎨 Starting multimodal AI response generation")
+        Log.d(TAG, "🎨 Starting multimodal AI streaming response generation")
         Log.d(TAG, "📝 Prompt: ${prompt.take(100)}${if (prompt.length > 100) "..." else ""}")
         Log.d(TAG, "🖼️ Image: ${imageBitmap.width}x${imageBitmap.height} (${imageBitmap.config})")
         
         try {
-            val response = suspendCancellableCoroutine { continuation ->
-                val responseBuilder = StringBuilder()
-                var firstTokenTime = 0L
-                var firstTokenReceived = false
-                
-                try {
-                    // Convert Bitmap to MPImage for MediaPipe
-                    val mpImage: MPImage = BitmapImageBuilder(imageBitmap).build()
-                    Log.d(TAG, "✅ Image converted to MPImage successfully")
-                    Log.d(TAG, "📊 MPImage details: width=${mpImage.width}, height=${mpImage.height}")
-                    
-                    // Save original bitmap and MPImage for inspection
-                    saveBitmapToDevice(imageBitmap, "original_bitmap_${System.currentTimeMillis()}.png")
-                    saveMPImageToDevice(mpImage, "converted_mpimage_${System.currentTimeMillis()}.png")
-                    
-                    // Analyze bitmap pixels to detect blank issues
-                    val pixelAnalysis = analyzeBitmapPixels(imageBitmap)
-                    Log.d(TAG, "🔍 Original bitmap analysis: $pixelAnalysis")
+            // Convert Bitmap to MPImage for MediaPipe
+            val mpImage: MPImage = BitmapImageBuilder(imageBitmap).build()
+            Log.d(TAG, "✅ Image converted to MPImage successfully")
+            Log.d(TAG, "📊 MPImage details: width=${mpImage.width}, height=${mpImage.height}")
+            
 
-                    // Then add text prompt
-                    session.addQueryChunk(prompt)
-                    Log.d(TAG, "📝 Text prompt added to session")
+            
+            // Analyze bitmap pixels to detect blank issues
+            val pixelAnalysis = analyzeBitmapPixels(imageBitmap)
+            Log.d(TAG, "🔍 Original bitmap analysis: $pixelAnalysis")
+
+            // Add text prompt
+            session.addQueryChunk(prompt)
+            Log.d(TAG, "📝 Text prompt added to session")
+            
+            // Add image (recommended by MediaPipe docs)
+            session.addImage(mpImage)
+            Log.d(TAG, "🖼️ Image added to session")
+            
+            var firstTokenTime = 0L
+            var firstTokenReceived = false
+            var currentResponse = ""
+            
+            // Generate response with streaming chunks
+            session.generateResponseAsync { partialResult, done ->
+                try {
+                    if (!firstTokenReceived) {
+                        firstTokenTime = System.currentTimeMillis()
+                        val timeToFirstToken = firstTokenTime - messageStartTime
+                        Log.d(TAG, "⚡ First multimodal token received in ${timeToFirstToken}ms")
+                        firstTokenReceived = true
+                    }
                     
-                    // Add image first (recommended by MediaPipe docs)
-                    session.addImage(mpImage)
-                    Log.d(TAG, "🖼️ Image added to session")
-                    
-                    
-                    
-                    // Generate response asynchronously
-                    session.generateResponseAsync { partialResult, done ->
-                        try {
-                            if (!firstTokenReceived) {
-                                firstTokenTime = System.currentTimeMillis()
-                                val timeToFirstToken = firstTokenTime - messageStartTime
-                                Log.d(TAG, "⚡ First multimodal token received in ${timeToFirstToken}ms")
-                                firstTokenReceived = true
-                            }
-                            
-                            responseBuilder.append(partialResult)
-                            
-                            if (done) {
-                                val fullResponse = responseBuilder.toString()
-                                val totalTime = System.currentTimeMillis() - messageStartTime
-                                val generationTime = if (firstTokenReceived) {
-                                    System.currentTimeMillis() - firstTokenTime
-                                } else {
-                                    0
-                                }
-                                
-                                Log.d(TAG, "🎉 Multimodal response complete!")
-                                Log.d(TAG, "📊 Stats: ${totalTime}ms total (${generationTime}ms generation)")
-                                Log.d(TAG, "📏 Response: ${fullResponse.length} chars")
-                                Log.d(TAG, "🧠 Preview: ${fullResponse.take(150)}${if (fullResponse.length > 150) "..." else ""}")
-                                
-                                continuation.resume(fullResponse)
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "💥 Error in multimodal response callback: ${e.message}")
-                            continuation.resume("Error processing multimodal response: ${e.message}")
+                    // Emit each chunk as it arrives
+                    if (partialResult.isNotEmpty()) {
+                        currentResponse += partialResult
+                        // Emit the current accumulated response for streaming effect
+                        val sendResult = trySend(currentResponse)
+                        if (sendResult.isSuccess) {
+                            Log.d(TAG, "📤 Streamed chunk: +${partialResult.length} chars (total: ${currentResponse.length})")
+                        } else {
+                            Log.w(TAG, "⚠️ Failed to send chunk: ${sendResult.exceptionOrNull()?.message}")
                         }
                     }
                     
+                    if (done) {
+                        val totalTime = System.currentTimeMillis() - messageStartTime
+                        val generationTime = if (firstTokenReceived) {
+                            System.currentTimeMillis() - firstTokenTime
+                        } else {
+                            0
+                        }
+                        
+                        Log.d(TAG, "🎉 Multimodal streaming response complete!")
+                        Log.d(TAG, "📊 Stats: ${totalTime}ms total (${generationTime}ms generation)")
+                        Log.d(TAG, "📏 Final response: ${currentResponse.length} chars")
+                        Log.d(TAG, "🧠 Preview: ${currentResponse.take(150)}${if (currentResponse.length > 150) "..." else ""}")
+                        
+                        // Ensure final response is sent before closing
+                        if (currentResponse.isNotEmpty()) {
+                            trySend(currentResponse)
+                        }
+                        
+                        // Close the flow when complete
+                        Log.d(TAG, "🔚 Closing multimodal streaming flow")
+                        close()
+                    }
                 } catch (e: Exception) {
-                    Log.e(TAG, "💥 Error setting up multimodal inference: ${e.message}")
-                    continuation.resume("Error setting up multimodal analysis: ${e.message}")
+                    Log.e(TAG, "💥 Error in multimodal streaming callback: ${e.message}")
+                    trySend("Error processing multimodal response: ${e.message}")
+                    close(e)
                 }
             }
             
-            emit(response)
-            
         } catch (e: Exception) {
-            val totalTime = System.currentTimeMillis() - messageStartTime
-            Log.e(TAG, "💥 Multimodal response generation failed after ${totalTime}ms: ${e.message}")
-            emit("Error generating multimodal response: ${e.message}")
+            Log.e(TAG, "💥 Error setting up multimodal streaming: ${e.message}")
+            trySend("Error setting up multimodal analysis: ${e.message}")
+            close(e)
         }
+        
+        // Keep the flow open until the callback completes
+        awaitClose {
+            Log.d(TAG, "🔚 Multimodal streaming flow closed")
+        }
+        
     }.flowOn(Dispatchers.IO)
     
     /**
@@ -332,44 +344,7 @@ class GoogleAIService @Inject constructor(
         }
     }
     
-    /**
-     * Save bitmap to device storage for inspection
-     */
-    private fun saveBitmapToDevice(bitmap: android.graphics.Bitmap, filename: String) {
-        try {
-            // Save to external files directory (accessible via file manager)
-            val externalDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
-            
-                         if (externalDir != null) {
-                 val file = File(externalDir, filename)
-                 val outputStream = FileOutputStream(file)
-                
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, outputStream)
-                outputStream.close()
-                
-                Log.d(TAG, "💾 Bitmap saved to: ${file.absolutePath}")
-            } else {
-                Log.w(TAG, "⚠️ External storage not available for saving bitmap")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "💥 Error saving bitmap: ${e.message}")
-        }
-    }
-    
-    /**
-     * Save MPImage to device storage for inspection
-     */
-         private fun saveMPImageToDevice(mpImage: MPImage, filename: String) {
-         try {
-             // Convert MPImage back to bitmap for saving
-             val bitmap = BitmapExtractor.extract(mpImage)
-             saveBitmapToDevice(bitmap, "mp_$filename")
-             
-             Log.d(TAG, "💾 MPImage saved as bitmap: mp_$filename")
-         } catch (e: Exception) {
-             Log.e(TAG, "💥 Error saving MPImage: ${e.message}")
-         }
-     }
+
     
     /**
      * Analyze bitmap pixels to detect if it's blank

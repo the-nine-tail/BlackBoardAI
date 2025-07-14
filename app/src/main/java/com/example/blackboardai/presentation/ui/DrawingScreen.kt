@@ -18,7 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blackboardai.presentation.viewmodel.DrawingViewModel
@@ -75,7 +78,7 @@ fun DrawingScreen(
     
     // AI Solution Dialog
     if (uiState.showSolution) {
-        AISolutionDialog(
+        CustomSolutionDialog(
             solution = uiState.aiSolution,
             onDismiss = viewModel::dismissSolution
         )
@@ -124,6 +127,7 @@ fun DrawingScreen(
                 onAddPath = viewModel::addPath,
                 onAddShape = viewModel::addShape,
                 onAddText = viewModel::addText,
+                onErasePath = viewModel::erasePath,
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -184,59 +188,191 @@ private fun TitleInputDialog(
     )
 }
 
+
+
 @Composable
-private fun AISolutionDialog(
-    solution: String,
-    onDismiss: () -> Unit
+private fun SimpleMarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Psychology,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = "AI Solution",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
+    // Handle empty or whitespace-only content
+    if (markdown.isBlank()) {
+        Text(
+            text = "🧠 Analyzing your drawing...\n\nPlease wait while I process the image and generate a solution.",
+            modifier = modifier,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        return
+    }
+    
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        val lines = markdown.split('\n')
+        var i = 0
+        
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            
+            // Skip empty lines that might cause issues
+            if (line.isEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                i++
+                continue
             }
-        },
-        text = {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                item {
-                    SelectionContainer {
+            
+            when {
+                // Headers - with safe substring
+                line.startsWith("### ") && line.length > 4 -> {
+                    Text(
+                        text = line.substring(4),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                line.startsWith("## ") && line.length > 3 -> {
+                    Text(
+                        text = line.substring(3),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                line.startsWith("# ") && line.length > 2 -> {
+                    Text(
+                        text = line.substring(2),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                
+                // Horizontal rule
+                line == "---" -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .padding(vertical = 8.dp)
+                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    )
+                }
+                
+                // Bullet points - with safe substring
+                line.startsWith("- ") && line.length > 2 -> {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
-                            text = solution,
+                            text = "•",
                             style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.fillMaxWidth()
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        MarkdownStyledText(
+                            text = line.substring(2),
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
+                
+                // Blockquotes - with safe substring
+                line.startsWith("> ") && line.length > 2 -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(20.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = MaterialTheme.shapes.small
+                                    )
+                            )
+                            MarkdownStyledText(
+                                text = line.substring(2),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                
+                // Code blocks (single line with backticks) - with safe substring
+                line.startsWith("`") && line.endsWith("`") && line.length > 2 -> {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = line.substring(1, line.length - 1),
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                // Regular text with inline formatting
+                else -> {
+                    MarkdownStyledText(text = line)
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Close")
+            i++
+        }
+    }
+}
+
+@Composable
+private fun MarkdownStyledText(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    // Safely handle text with bold formatting - process outside compose
+    val processedText = remember(text) {
+        try {
+            if (text.contains("**") && text.split("**").size > 1) {
+                text.split("**")
+            } else {
+                listOf(text) // Return single item list for plain text
             }
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-    )
+        } catch (e: Exception) {
+            listOf(text) // Fallback to plain text
+        }
+    }
+    
+    // Render based on processed result
+    if (processedText.size > 1) {
+        // Has bold formatting - render as styled text
+        Row(modifier = modifier) {
+            processedText.forEachIndexed { index, part ->
+                if (part.isNotEmpty()) { // Only render non-empty parts
+                    Text(
+                        text = part,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (index % 2 == 1) FontWeight.Bold else FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    } else {
+        // Regular text - render as plain text
+        Text(
+            text = text,
+            modifier = modifier,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
 } 
