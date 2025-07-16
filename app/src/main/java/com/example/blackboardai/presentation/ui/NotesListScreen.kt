@@ -1,5 +1,7 @@
 package com.example.blackboardai.presentation.ui
 
+import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,10 +11,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -22,6 +29,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blackboardai.data.ai.GoogleAIService
 import com.example.blackboardai.data.ai.ModelStatus
 import com.example.blackboardai.domain.entity.Note
+import com.example.blackboardai.presentation.overlay.OverlayManager
 import com.example.blackboardai.presentation.viewmodel.NotesViewModel
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -30,17 +38,36 @@ import javax.inject.Inject
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotesListScreen(
+    overlayManager: OverlayManager,
     onCreateNote: () -> Unit,
     onNoteClick: (Long) -> Unit,
     viewModel: NotesViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     
-    LaunchedEffect(uiState.error) {
-        uiState.error?.let {
-            // Error handling could be improved with SnackBar
-            viewModel.clearError()
-        }
+    // Show diagnostic results as dialog
+    uiState.error?.let { errorMessage ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearError() },
+            title = { 
+                Text(
+                    text = if (errorMessage.startsWith("✅")) "Diagnostic Result" else "Error",
+                    color = if (errorMessage.startsWith("✅")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                )
+            },
+            text = { 
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearError() }) {
+                    Text("OK")
+                }
+            }
+        )
     }
     
     Scaffold(
@@ -52,6 +79,64 @@ fun NotesListScreen(
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold
                     )
+                },
+                actions = {
+                    // Model Diagnostics Button
+                    var showDiagnosticsDialog by remember { mutableStateOf(false) }
+                    
+                    IconButton(
+                        onClick = { showDiagnosticsDialog = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Model Diagnostics",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    
+                    if (showDiagnosticsDialog) {
+                        ModelDiagnosticsDialog(
+                            onDismiss = { showDiagnosticsDialog = false },
+                            onCheckIntegrity = {
+                                viewModel.checkModelIntegrity()
+                                showDiagnosticsDialog = false
+                            },
+                            onForceReset = {
+                                viewModel.forceCompleteReset()
+                                showDiagnosticsDialog = false
+                            }
+                        )
+                    }
+                    
+                    // Smart Overlay Button (Toggle Start/Stop)
+                    IconButton(
+                        onClick = {
+                            if (uiState.isModelReady) {
+                                if (overlayManager.isOverlayActive()) {
+                                    overlayManager.stopSmartOverlay()
+                                    Toast.makeText(context, "Smart overlay stopped", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    overlayManager.startSmartOverlay()
+                                }
+                            } else {
+                                Toast.makeText(context, "AI model is still loading. Please wait...", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = uiState.isModelReady
+                    ) {
+                        Icon(
+                            imageVector = if (overlayManager.isOverlayActive()) Icons.Default.Stop else Icons.Default.ScreenShare,
+                            contentDescription = if (overlayManager.isOverlayActive()) "Stop Overlay" else "Smart Overlay",
+                            tint = if (uiState.isModelReady) {
+                                if (overlayManager.isOverlayActive()) 
+                                    MaterialTheme.colorScheme.error
+                                else 
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.4f)
+                            }
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -371,4 +456,93 @@ private fun formatSize(bytes: Long): String {
         bytes < 1024 * 1024 -> "${bytes / 1024} KB"
         else -> "${bytes / (1024 * 1024)} MB"
     }
+}
+
+@Composable
+private fun ModelDiagnosticsDialog(
+    onDismiss: () -> Unit,
+    onCheckIntegrity: () -> Unit,
+    onForceReset: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { 
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text("Model Diagnostics")
+            }
+        },
+        text = { 
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Use these tools to diagnose and fix AI model issues:",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                
+                Text(
+                    text = "• Check Integrity: Verify model file is not corrupted",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Text(
+                    text = "• Force Reset: Delete all model files and force re-download",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Text(
+                    text = "⚠️ Use Force Reset if model was working before but suddenly stopped",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        confirmButton = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onCheckIntegrity
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Psychology,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Check Integrity")
+                }
+                
+                Button(
+                    onClick = onForceReset,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Force Reset")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 } 

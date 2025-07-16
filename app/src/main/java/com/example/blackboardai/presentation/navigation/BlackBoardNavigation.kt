@@ -10,9 +10,11 @@ import androidx.navigation.navArgument
 import com.example.blackboardai.presentation.ui.DrawingScreen
 import com.example.blackboardai.presentation.ui.InitializationScreen
 import com.example.blackboardai.presentation.ui.NotesListScreen
+import com.example.blackboardai.presentation.overlay.OverlayManager
 
 @Composable
 fun BlackBoardNavigation(
+    overlayManager: OverlayManager,
     navController: NavHostController = rememberNavController()
 ) {
     NavHost(
@@ -32,6 +34,7 @@ fun BlackBoardNavigation(
         
         composable(Screen.NotesList.route) {
             NotesListScreen(
+                overlayManager = overlayManager,
                 onCreateNote = {
                     navController.navigate(Screen.Drawing.createRoute())
                 },

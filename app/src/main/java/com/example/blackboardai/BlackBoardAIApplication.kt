@@ -12,6 +12,7 @@ import com.example.blackboardai.data.ai.GoogleAIService
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import com.example.blackboardai.data.ai.ModelStatus
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -31,7 +32,7 @@ class BlackBoardAIApplication : Application() {
         // Initialize AI model ONCE during app startup using Hilt EntryPoint
         applicationScope.launch {
             val startTime = System.currentTimeMillis()
-            Log.d("[BlackBoardAI Log]", "=== MODEL INITIALIZATION START ===")
+            Log.d("[BlackBoardAI Log]", "=== APPLICATION INITIALIZATION CHECK ===")
             
             try {
                 val entryPoint = EntryPointAccessors.fromApplication(
@@ -40,20 +41,30 @@ class BlackBoardAIApplication : Application() {
                 )
                 val googleAIService = entryPoint.getGoogleAIService()
                 
-                val success = googleAIService.initializeModelOnce()
-                val initTime = System.currentTimeMillis() - startTime
+                // Check if initialization is needed
+                val isNeeded = googleAIService.isInitializationNeeded()
+                val currentStatus = googleAIService.getModelStatus()
+                Log.d("[BlackBoardAI Log]", "📊 Current model status: $currentStatus, initialization needed: $isNeeded")
                 
-                if (success) {
-                    Log.d("[BlackBoardAI Log]", "✅ Model initialized successfully in ${initTime}ms")
+                if (isNeeded) {
+                    Log.d("[BlackBoardAI Log]", "🚀 Application starting model initialization...")
+                    val success = googleAIService.initializeModelOnce()
+                    val initTime = System.currentTimeMillis() - startTime
+                    
+                    if (success) {
+                        Log.d("[BlackBoardAI Log]", "✅ Model initialized successfully in ${initTime}ms")
+                    } else {
+                        Log.e("[BlackBoardAI Log]", "❌ Model initialization failed after ${initTime}ms")
+                    }
                 } else {
-                    Log.e("[BlackBoardAI Log]", "❌ Model initialization failed after ${initTime}ms")
+                    Log.d("[BlackBoardAI Log]", "⏭️ Model initialization not needed, status: $currentStatus")
                 }
             } catch (e: Exception) {
                 val initTime = System.currentTimeMillis() - startTime
                 Log.e("[BlackBoardAI Log]", "💥 Model initialization exception after ${initTime}ms: ${e.message}")
             }
             
-            Log.d("[BlackBoardAI Log]", "=== MODEL INITIALIZATION END ===")
+            Log.d("[BlackBoardAI Log]", "=== APPLICATION INITIALIZATION END ===")
         }
     }
 } 

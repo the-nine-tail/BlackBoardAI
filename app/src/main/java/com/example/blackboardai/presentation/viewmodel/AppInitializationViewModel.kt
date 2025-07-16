@@ -41,12 +41,17 @@ class AppInitializationViewModel @Inject constructor(
     
     private fun checkAndStartInitialization() {
         viewModelScope.launch {
-            // Check current status
+            // Check if initialization is truly needed
+            val isNeeded = googleAIService.isInitializationNeeded()
             val currentStatus = googleAIService.getModelStatus()
             
-            // If not started or failed, start initialization
-            if (currentStatus == ModelStatus.NOT_INITIALIZED || currentStatus == ModelStatus.ERROR) {
+            Log.d("AppInitViewModel", "📊 Status: $currentStatus, initialization needed: $isNeeded")
+            
+            if (isNeeded) {
+                Log.d("AppInitViewModel", "🚀 ViewModel starting model setup...")
                 googleAIService.initializeModelOnce()
+            } else {
+                Log.d("AppInitViewModel", "⏭️ Model setup not needed - already handled or in progress")
             }
         }
     }

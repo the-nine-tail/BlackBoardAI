@@ -8,6 +8,13 @@
     <!-- For Android 11+ to access all files (requires manual permission grant) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" 
         android:minSdkVersion="30" />
+    
+    <!-- Smart Overlay Feature Permissions -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" 
+        android:minSdkVersion="34" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".BlackBoardAIApplication"
@@ -44,6 +51,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- Smart Overlay Service -->
+        <service 
+            android:name=".presentation.overlay.SmartOverlayService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 
 </manifest>

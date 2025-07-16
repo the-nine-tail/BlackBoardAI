@@ -74,6 +74,48 @@ class NotesViewModel @Inject constructor(
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
     }
+    
+    /**
+     * Check model file integrity and display results
+     */
+    fun checkModelIntegrity() {
+        viewModelScope.launch {
+            try {
+                val result = googleAIService.checkModelIntegrity()
+                val message = if (result.isValid) {
+                    "✅ Model file is valid\n\n${result.details}"
+                } else {
+                    "❌ ${result.message}\n\n${result.details}\n\n${if (result.shouldReDownload) "Recommendation: Force reset to re-download" else "Check file permissions"}"
+                }
+                
+                _uiState.value = _uiState.value.copy(
+                    error = message
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to check model integrity: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Force complete reset - clears all cached states and forces model re-download
+     */
+    fun forceCompleteReset() {
+        viewModelScope.launch {
+            try {
+                googleAIService.forceCompleteReset()
+                _uiState.value = _uiState.value.copy(
+                    error = "✅ Force reset complete!\n\nAll model files and caches cleared. Restart the app to trigger fresh model download."
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Failed to force reset: ${e.message}"
+                )
+            }
+        }
+    }
 }
 
 data class NotesUiState(
