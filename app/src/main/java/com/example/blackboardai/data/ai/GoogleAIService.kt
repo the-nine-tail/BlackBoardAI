@@ -15,6 +15,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -23,6 +26,27 @@ import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+
+enum class ModelStatus {
+    NOT_INITIALIZED,
+    CHECKING_MODEL,
+    DOWNLOADING_MODEL,
+    EXTRACTING_MODEL,
+    INITIALIZING_INFERENCE,
+    CREATING_SESSION,
+    WARMING_UP,
+    READY,
+    ERROR
+}
+
+data class ModelInitializationProgress(
+    val status: ModelStatus = ModelStatus.NOT_INITIALIZED,
+    val message: String = "",
+    val progress: Float = 0f, // 0.0 to 1.0
+    val error: String? = null,
+    val currentPath: String? = null,
+    val failedStep: ModelStatus? = null // Track which step failed for smart retry
+)
 
 @Singleton
 class GoogleAIService @Inject constructor(
@@ -40,30 +64,152 @@ class GoogleAIService @Inject constructor(
     private var isModelInitialized = false
     private var cachedModelFilePath: String? = null
     
+    // Model initialization progress tracking
+    private val _initializationProgress = MutableStateFlow(ModelInitializationProgress())
+    val initializationProgress: StateFlow<ModelInitializationProgress> = _initializationProgress.asStateFlow()
+    
     /**
-     * Initialize model ONCE during app startup - called from Application class
+     * Get current model status
      */
-    suspend fun initializeModelOnce(): Boolean = withContext(Dispatchers.IO) {
-        if (isModelInitialized && llmSession != null) {
-            Log.d(TAG, "⚡ Model already initialized, skipping...")
-            return@withContext true
-        }
+    fun getModelStatus(): ModelStatus = _initializationProgress.value.status
+    
+    /**
+     * Reset initialization state for retry scenarios
+     */
+    fun resetInitializationState() {
+        _initializationProgress.value = ModelInitializationProgress(
+            status = ModelStatus.NOT_INITIALIZED,
+            message = "",
+            progress = 0f
+        )
+        isModelInitialized = false
+        llmInference?.close()
+        llmSession = null
+        llmInference = null
+    }
+    
+    /**
+     * Smart retry that continues from the failed step instead of starting over
+     */
+    suspend fun retryFromFailedStep(): Boolean = withContext(Dispatchers.IO) {
+        val currentProgress = _initializationProgress.value
+        val failedStep = currentProgress.failedStep ?: ModelStatus.NOT_INITIALIZED
         
-        Log.d(TAG, "🚀 Starting model initialization...")
-        val startTime = System.currentTimeMillis()
+        Log.d(TAG, "🔄 Smart retry from failed step: $failedStep")
         
         try {
-            // Step 1: Get model file (only once)
-            val modelFile = getModelFileOnce()
-            if (modelFile == null) {
-                Log.e(TAG, "❌ Model file not found")
-                return@withContext false
+            when (failedStep) {
+                ModelStatus.CHECKING_MODEL, ModelStatus.DOWNLOADING_MODEL, ModelStatus.EXTRACTING_MODEL -> {
+                    // If download/extraction failed, try to get model file again
+                    Log.d(TAG, "🔄 Retrying model acquisition from step: $failedStep")
+                    
+                    _initializationProgress.value = ModelInitializationProgress(
+                        status = ModelStatus.CHECKING_MODEL,
+                        message = "Retrying model setup...",
+                        progress = 0.1f
+                    )
+                    
+                    val modelFile = getModelFileOnce()
+                    if (modelFile == null) {
+                        Log.e(TAG, "❌ Model file still not available after retry")
+                        _initializationProgress.value = ModelInitializationProgress(
+                            status = ModelStatus.ERROR,
+                            message = "Model setup failed after retry",
+                            progress = 0f,
+                            error = "Could not acquire model file after retry",
+                            failedStep = ModelStatus.CHECKING_MODEL
+                        )
+                        return@withContext false
+                    }
+                    
+                    cachedModelFilePath = modelFile.absolutePath
+                    Log.d(TAG, "✅ Model file acquired successfully: ${modelFile.absolutePath}")
+                    
+                    // Continue with inference initialization
+                    return@withContext initializeInferenceAndSession(modelFile)
+                }
+                
+                ModelStatus.INITIALIZING_INFERENCE, ModelStatus.CREATING_SESSION -> {
+                    // If inference/session creation failed, retry from there
+                    Log.d(TAG, "🔄 Retrying inference initialization from step: $failedStep")
+                    
+                    val modelPath = cachedModelFilePath
+                    if (modelPath == null) {
+                        Log.e(TAG, "❌ No cached model path for inference retry")
+                        return@withContext retryFromFailedStep() // Fall back to full retry
+                    }
+                    
+                    val modelFile = File(modelPath)
+                    if (!modelFile.exists()) {
+                        Log.e(TAG, "❌ Cached model file no longer exists: $modelPath")
+                        return@withContext retryFromFailedStep() // Fall back to full retry
+                    }
+                    
+                    return@withContext initializeInferenceAndSession(modelFile)
+                }
+                
+                ModelStatus.WARMING_UP -> {
+                    // If warmup failed, just retry warmup
+                    Log.d(TAG, "🔄 Retrying model warmup")
+                    
+                    _initializationProgress.value = ModelInitializationProgress(
+                        status = ModelStatus.WARMING_UP,
+                        message = "Retrying model warmup...",
+                        progress = 0.9f
+                    )
+                    
+                    try {
+                        warmupModel()
+                        _initializationProgress.value = ModelInitializationProgress(
+                            status = ModelStatus.READY,
+                            message = "AI model ready!",
+                            progress = 1.0f
+                        )
+                        return@withContext true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Warmup retry failed: ${e.message}")
+                        _initializationProgress.value = ModelInitializationProgress(
+                            status = ModelStatus.ERROR,
+                            message = "Model warmup failed after retry",
+                            progress = 0f,
+                            error = e.message,
+                            failedStep = ModelStatus.WARMING_UP
+                        )
+                        return@withContext false
+                    }
+                }
+                
+                else -> {
+                    // For other cases, do full initialization
+                    Log.d(TAG, "🔄 Doing full initialization retry")
+                    return@withContext initializeModelOnce()
+                }
             }
-            
-            Log.d(TAG, "📁 Model file ready: ${modelFile.absolutePath}")
-            cachedModelFilePath = modelFile.absolutePath
-            
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 Smart retry failed: ${e.message}")
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.ERROR,
+                message = "Retry failed",
+                progress = 0f,
+                error = e.message,
+                failedStep = failedStep
+            )
+            return@withContext false
+        }
+    }
+    
+    /**
+     * Initialize inference and session (extracted for reuse in retry logic)
+     */
+    private suspend fun initializeInferenceAndSession(modelFile: File): Boolean {
+        try {
             // Step 2: Initialize LLM Inference
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.INITIALIZING_INFERENCE,
+                message = "Initializing AI inference engine...",
+                progress = 0.5f
+            )
+            
             val inferenceStartTime = System.currentTimeMillis()
             Log.d(TAG, "🔧 Creating LLM Inference instance...")
             
@@ -79,6 +225,12 @@ class GoogleAIService @Inject constructor(
             Log.d(TAG, "✅ LLM Inference created in ${inferenceTime}ms")
             
             // Step 3: Create session
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.CREATING_SESSION,
+                message = "Creating AI session...",
+                progress = 0.7f
+            )
+            
             val sessionStartTime = System.currentTimeMillis()
             Log.d(TAG, "🔧 Creating LLM Session...")
             
@@ -95,6 +247,12 @@ class GoogleAIService @Inject constructor(
             isModelInitialized = true
             
             // Step 4: Warmup model
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.WARMING_UP,
+                message = "Warming up AI model...",
+                progress = 0.9f
+            )
+            
             val warmupStartTime = System.currentTimeMillis()
             Log.d(TAG, "🔥 Warming up model...")
             
@@ -106,6 +264,144 @@ class GoogleAIService @Inject constructor(
                 Log.w(TAG, "⚠️ Warmup failed but continuing: ${e.message}")
             }
             
+            // Step 5: Ready!
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.READY,
+                message = "AI model ready!",
+                progress = 1.0f
+            )
+            
+            return true
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 Inference/Session initialization failed: ${e.message}")
+            val failedStep = if (llmInference == null) {
+                ModelStatus.INITIALIZING_INFERENCE
+            } else {
+                ModelStatus.CREATING_SESSION
+            }
+            
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.ERROR,
+                message = "AI engine initialization failed",
+                progress = 0f,
+                error = e.message,
+                failedStep = failedStep
+            )
+            return false
+        }
+    }
+    
+    /**
+     * Initialize model ONCE during app startup - called from Application class
+     */
+    suspend fun initializeModelOnce(): Boolean = withContext(Dispatchers.IO) {
+        if (isModelInitialized && llmSession != null) {
+            Log.d(TAG, "⚡ Model already initialized, skipping...")
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.READY,
+                message = "Model ready",
+                progress = 1.0f
+            )
+            return@withContext true
+        }
+        
+        Log.d(TAG, "🚀 Starting model initialization...")
+        val startTime = System.currentTimeMillis()
+        
+        try {
+            // Step 1: Check for model file
+            val targetModelFile = getModelFilePath()
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.CHECKING_MODEL,
+                message = "Checking for AI model...\nLooking in: ${targetModelFile.absolutePath}",
+                progress = 0.1f,
+                currentPath = targetModelFile.absolutePath
+            )
+            
+            val modelFile = getModelFileOnce()
+            if (modelFile == null) {
+                Log.e(TAG, "❌ Model file not found")
+                _initializationProgress.value = ModelInitializationProgress(
+                    status = ModelStatus.ERROR,
+                    message = "Model file not found",
+                    progress = 0f,
+                    error = "Unable to locate or download the AI model"
+                )
+                return@withContext false
+            }
+            
+            Log.d(TAG, "📁 Model file ready: ${modelFile.absolutePath}")
+            cachedModelFilePath = modelFile.absolutePath
+            
+            // Step 2: Initialize LLM Inference
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.INITIALIZING_INFERENCE,
+                message = "Initializing AI inference engine...",
+                progress = 0.5f
+            )
+            
+            val inferenceStartTime = System.currentTimeMillis()
+            Log.d(TAG, "🔧 Creating LLM Inference instance...")
+            
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(modelFile.absolutePath)
+                .setMaxTokens(4096)
+                .setPreferredBackend(LlmInference.Backend.GPU)
+                .setMaxNumImages(1)
+                .build()
+            
+            llmInference = LlmInference.createFromOptions(context, options)
+            val inferenceTime = System.currentTimeMillis() - inferenceStartTime
+            Log.d(TAG, "✅ LLM Inference created in ${inferenceTime}ms")
+            
+            // Step 3: Create session
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.CREATING_SESSION,
+                message = "Creating AI session...",
+                progress = 0.7f
+            )
+            
+            val sessionStartTime = System.currentTimeMillis()
+            Log.d(TAG, "🔧 Creating LLM Session...")
+            
+            val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+                .setTopK(40)
+                .setTemperature(0.2f)
+                .setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
+                .build()
+            
+            llmSession = LlmInferenceSession.createFromOptions(llmInference!!, sessionOptions)
+            val sessionTime = System.currentTimeMillis() - sessionStartTime
+            Log.d(TAG, "✅ LLM Session created in ${sessionTime}ms")
+            
+            isModelInitialized = true
+            
+            // Step 4: Warmup model
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.WARMING_UP,
+                message = "Warming up AI model...",
+                progress = 0.9f
+            )
+            
+            val warmupStartTime = System.currentTimeMillis()
+            Log.d(TAG, "🔥 Warming up model...")
+            
+            try {
+                warmupModel()
+                val warmupTime = System.currentTimeMillis() - warmupStartTime
+                Log.d(TAG, "✅ Model warmed up in ${warmupTime}ms")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Warmup failed but continuing: ${e.message}")
+            }
+            
+            // Step 5: Ready!
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.READY,
+                message = "AI model ready!",
+                progress = 1.0f
+            )
+            
             val totalTime = System.currentTimeMillis() - startTime
             Log.d(TAG, "🎉 Model fully initialized and ready in ${totalTime}ms")
             
@@ -114,25 +410,59 @@ class GoogleAIService @Inject constructor(
         } catch (e: Exception) {
             val totalTime = System.currentTimeMillis() - startTime
             Log.e(TAG, "💥 Model initialization failed after ${totalTime}ms: ${e.message}")
+            _initializationProgress.value = ModelInitializationProgress(
+                status = ModelStatus.ERROR,
+                message = "Model initialization failed",
+                progress = 0f,
+                error = e.message
+            )
             return@withContext false
         }
+    }
+    
+    /**
+     * Get the target model file path using app-specific external Downloads folder
+     */
+    private fun getModelFilePath(): File {
+        val downloadsDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            ?: context.getExternalFilesDir(null) // Fallback to app external storage root
+            ?: context.filesDir // Final fallback to internal storage
+            
+        return File(downloadsDir, MODEL_FILENAME)
     }
     
     /**
      * Get model file ONCE - no repeated file checks
      */
     private suspend fun getModelFileOnce(): File? {
-        // First check app internal storage
+        // First check app-specific Downloads folder (new location)
+        val downloadsModelFile = getModelFilePath()
+        if (downloadsModelFile.exists() && downloadsModelFile.length() > 0) {
+            Log.d(TAG, "📁 Using Downloads model file: ${downloadsModelFile.absolutePath}")
+            return downloadsModelFile
+        }
+        
+        // Check legacy internal storage location for backwards compatibility
         val internalModelFile = File(context.filesDir, MODEL_FILENAME)
         if (internalModelFile.exists() && internalModelFile.length() > 0) {
-            Log.d(TAG, "📱 Using internal model file: ${internalModelFile.absolutePath}")
+            Log.d(TAG, "📱 Using legacy internal model file: ${internalModelFile.absolutePath}")
             return internalModelFile
         }
         
-        Log.d(TAG, "🔄 No internal model found, checking external sources...")
+        Log.d(TAG, "🔄 No model found, checking external sources...")
+        
+        // Update progress to downloading
+        val targetModelFile = getModelFilePath()
+        _initializationProgress.value = ModelInitializationProgress(
+            status = ModelStatus.DOWNLOADING_MODEL,
+            message = "Setting up AI model...\nTarget: ${targetModelFile.absolutePath}",
+            progress = 0.2f,
+            currentPath = targetModelFile.absolutePath
+        )
         
         // Download/copy model from external sources (only if needed)
         var modelFile: File? = null
+        var lastProgress = 0
         modelDownloadService.downloadModel().collect { result ->
             when (result) {
                 is ModelDownloadService.DownloadResult.Success -> {
@@ -141,10 +471,76 @@ class GoogleAIService @Inject constructor(
                 }
                 is ModelDownloadService.DownloadResult.Error -> {
                     Log.e(TAG, "❌ Model download/copy failed: ${result.message}")
+                    
+                    // Determine which step failed based on the error context
+                    val failedStep = when {
+                        result.message.contains("extract", ignoreCase = true) -> ModelStatus.EXTRACTING_MODEL
+                        result.message.contains("download", ignoreCase = true) -> ModelStatus.DOWNLOADING_MODEL
+                        else -> ModelStatus.CHECKING_MODEL
+                    }
+                    
+                    val errorMessage = buildString {
+                        append(result.message)
+                        appendLine()
+                        appendLine()
+                        append("Target location: ${getModelFilePath().absolutePath}")
+                        
+                        // Include file metadata if available
+                        result.fileMetadata?.let { metadata ->
+                            appendLine()
+                            appendLine()
+                            append(metadata)
+                        }
+                    }
+                    
+                    _initializationProgress.value = ModelInitializationProgress(
+                        status = ModelStatus.ERROR,
+                        message = "Model setup failed",
+                        progress = 0f,
+                        error = errorMessage,
+                        failedStep = failedStep
+                    )
                     return@collect
                 }
                 is ModelDownloadService.DownloadResult.Progress -> {
                     Log.d(TAG, "📥 Download progress: ${result.percentage}%")
+                    if (result.percentage != lastProgress) {
+                        val pathMessage = result.currentPath?.let { path ->
+                            "\n$path"
+                        } ?: ""
+                        
+                        // Handle extraction progress separately from download progress  
+                        val isExtracting = result.currentPath?.contains("Extracting") == true ||
+                                          result.currentPath?.contains("ZIP") == true ||
+                                          result.currentPath?.contains("GZIP") == true ||
+                                          result.currentPath?.contains("TAR_GZ") == true
+                        
+                        val statusMessage = if (isExtracting) {
+                            "Extracting AI model... ${result.percentage}%$pathMessage"
+                        } else {
+                            "Downloading AI model... ${result.percentage}%$pathMessage"
+                        }
+                        
+                        val status = if (isExtracting) {
+                            ModelStatus.EXTRACTING_MODEL
+                        } else {
+                            ModelStatus.DOWNLOADING_MODEL
+                        }
+                        
+                        val progressValue = if (status == ModelStatus.EXTRACTING_MODEL) {
+                            0.35f + (result.percentage / 100f * 0.1f) // 35% to 45% for extraction
+                        } else {
+                            0.2f + (result.percentage / 100f * 0.15f) // 20% to 35% for download
+                        }
+                        
+                        _initializationProgress.value = ModelInitializationProgress(
+                            status = status,
+                            message = statusMessage,
+                            progress = progressValue,
+                            currentPath = result.currentPath
+                        )
+                        lastProgress = result.percentage
+                    }
                 }
             }
         }

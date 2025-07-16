@@ -316,6 +316,31 @@ class DrawingViewModel @Inject constructor(
             try {
                 _uiState.value = _uiState.value.copy(isSolving = true)
                 
+                // Check if AI model is ready
+                if (googleAIService.getModelStatus() != com.example.blackboardai.data.ai.ModelStatus.READY) {
+                    val statusMessage = when (googleAIService.getModelStatus()) {
+                        com.example.blackboardai.data.ai.ModelStatus.NOT_INITIALIZED,
+                        com.example.blackboardai.data.ai.ModelStatus.CHECKING_MODEL -> 
+                            "🔄 AI is still starting up...\n\nPlease wait a moment while we initialize the AI model for the first time."
+                        com.example.blackboardai.data.ai.ModelStatus.DOWNLOADING_MODEL -> 
+                            "📥 Downloading AI model...\n\nThis only happens once. Please wait while we download the AI model to your device."
+                        com.example.blackboardai.data.ai.ModelStatus.INITIALIZING_INFERENCE,
+                        com.example.blackboardai.data.ai.ModelStatus.CREATING_SESSION,
+                        com.example.blackboardai.data.ai.ModelStatus.WARMING_UP -> 
+                            "⚙️ Setting up AI engine...\n\nAlmost ready! Just finishing the AI setup process."
+                        com.example.blackboardai.data.ai.ModelStatus.ERROR -> 
+                            "❌ AI setup failed\n\nThere was an error setting up the AI model. Please restart the app or check your internet connection."
+                        else -> "⏳ AI not ready yet...\n\nPlease wait for the AI model to finish initializing."
+                    }
+                    
+                    _uiState.value = _uiState.value.copy(
+                        isSolving = false,
+                        aiSolution = statusMessage,
+                        showSolution = true
+                    )
+                    return@launch
+                }
+                
                 // Check if there's anything to solve
                 if (_uiState.value.drawingPaths.isEmpty() && 
                     _uiState.value.shapes.isEmpty() && 

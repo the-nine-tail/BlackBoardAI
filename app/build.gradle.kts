@@ -107,6 +107,9 @@ dependencies {
     implementation("com.google.mediapipe:tasks-genai:0.10.25")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     
+    // Archive extraction support
+    implementation("org.apache.commons:commons-compress:1.24.0")
+    
     // MediaPipe Framework for image processing
     implementation("com.google.mediapipe:tasks-vision:0.20230731")
     

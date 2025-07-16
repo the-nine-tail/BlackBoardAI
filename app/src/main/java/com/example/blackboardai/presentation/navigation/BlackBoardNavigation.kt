@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.blackboardai.presentation.ui.DrawingScreen
+import com.example.blackboardai.presentation.ui.InitializationScreen
 import com.example.blackboardai.presentation.ui.NotesListScreen
 
 @Composable
@@ -16,8 +17,19 @@ fun BlackBoardNavigation(
 ) {
     NavHost(
         navController = navController,
-        startDestination = Screen.NotesList.route
+        startDestination = Screen.Initialization.route
     ) {
+        composable(Screen.Initialization.route) {
+            InitializationScreen(
+                onInitializationComplete = {
+                    navController.navigate(Screen.NotesList.route) {
+                        // Clear the initialization screen from the back stack
+                        popUpTo(Screen.Initialization.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+        
         composable(Screen.NotesList.route) {
             NotesListScreen(
                 onCreateNote = {
@@ -45,6 +57,7 @@ fun BlackBoardNavigation(
 }
 
 sealed class Screen(val route: String) {
+    object Initialization : Screen("initialization")
     object NotesList : Screen("notes_list")
     
     object Drawing : Screen("drawing/{noteId}") {

@@ -1,5 +1,6 @@
 package com.example.blackboardai.presentation.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -7,19 +8,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.blackboardai.data.ai.GoogleAIService
+import com.example.blackboardai.data.ai.ModelStatus
 import com.example.blackboardai.domain.entity.Note
 import com.example.blackboardai.presentation.viewmodel.NotesViewModel
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import javax.inject.Inject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,15 +60,31 @@ fun NotesListScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = onCreateNote,
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Create Note",
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
+                onClick = {
+                    if (uiState.isModelReady) {
+                        onCreateNote()
+                    }
+                },
+                containerColor = if (uiState.isModelReady) 
+                    MaterialTheme.colorScheme.primary 
+                else 
+                    MaterialTheme.colorScheme.outline,
+                content = {
+                    if (uiState.isModelReady) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Create Note",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 3.dp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            )
         }
     ) { paddingValues ->
         Box(
@@ -87,20 +109,108 @@ fun NotesListScreen(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // Show model status banner if not ready
+                        if (!uiState.isModelReady) {
+                            item {
+                                ModelStatusBanner(
+                                    modelStatus = uiState.modelStatus,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                        
                         items(
                             items = uiState.notes,
                             key = { note -> note.id }
                         ) { note ->
                             NoteCard(
                                 note = note,
-                                onClick = { onNoteClick(note.id) },
-                                onDelete = { viewModel.deleteNote(note.id) }
+                                onClick = { 
+                                    if (uiState.isModelReady) {
+                                        onNoteClick(note.id) 
+                                    }
+                                },
+                                onDelete = { viewModel.deleteNote(note.id) },
+                                isEnabled = uiState.isModelReady
                             )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModelStatusBanner(
+    modelStatus: ModelStatus,
+    modifier: Modifier = Modifier
+) {
+    val (message, icon, color) = when (modelStatus) {
+        ModelStatus.NOT_INITIALIZED, ModelStatus.CHECKING_MODEL -> 
+            Triple("AI is starting up...", Icons.Default.Psychology, MaterialTheme.colorScheme.primary)
+        ModelStatus.DOWNLOADING_MODEL -> 
+            Triple("Downloading AI model...", Icons.Default.Psychology, MaterialTheme.colorScheme.primary)
+        ModelStatus.EXTRACTING_MODEL -> 
+            Triple("Extracting AI model...", Icons.Default.Psychology, MaterialTheme.colorScheme.primary)
+        ModelStatus.INITIALIZING_INFERENCE, ModelStatus.CREATING_SESSION, ModelStatus.WARMING_UP -> 
+            Triple("Setting up AI engine...", Icons.Default.Psychology, MaterialTheme.colorScheme.primary)
+        ModelStatus.ERROR -> 
+            Triple("AI setup failed. Some features may not work.", Icons.Default.Psychology, MaterialTheme.colorScheme.error)
+        ModelStatus.READY -> 
+            Triple("", Icons.Default.Psychology, MaterialTheme.colorScheme.primary) // Should not show this banner when ready
+    }
+    
+    if (modelStatus != ModelStatus.READY) {
+        Card(
+            modifier = modifier,
+            colors = CardDefaults.cardColors(
+                containerColor = color.copy(alpha = 0.1f)
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp, 
+                color.copy(alpha = 0.3f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (modelStatus == ModelStatus.ERROR) {
+                    Icon(
+                        imageVector = Icons.Default.Psychology,
+                        contentDescription = null,
+                        tint = color,
+                        modifier = Modifier.size(24.dp)
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = color
+                    )
+                }
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "AI Setup",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = color
+                    )
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
     }
 }
 
@@ -146,6 +256,7 @@ private fun NoteCard(
     note: Note,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    isEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -174,10 +285,16 @@ private fun NoteCard(
     }
     
     Card(
-        onClick = onClick,
+        onClick = if (isEnabled) onClick else {{}},
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isEnabled) 
+                MaterialTheme.colorScheme.surface 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
