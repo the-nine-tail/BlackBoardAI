@@ -3,6 +3,7 @@ package com.example.blackboardai.presentation.overlay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.*
+import android.graphics.PathMeasure
 import android.media.projection.MediaProjection
 import android.util.AttributeSet
 import android.util.Log
@@ -39,6 +40,8 @@ class OverlaySelectionView @JvmOverloads constructor(
     private var isDrawing = false
     private var selectionBounds = RectF()
     private var hasSelection = false
+    private var lastX = 0f
+    private var lastY = 0f
     
     // UI Components
     private val instructionText: TextView
@@ -83,7 +86,7 @@ class OverlaySelectionView @JvmOverloads constructor(
     
     private fun createInstructionText(): TextView {
         return TextView(context).apply {
-            text = "Draw around the content you want to analyze"
+            text = "Draw a free-form shape around the content you want to analyze"
             textSize = 16f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.BLACK)
@@ -130,9 +133,11 @@ class OverlaySelectionView @JvmOverloads constructor(
     }
     
     private fun createAnswerModal(): OverlayAnswerModal {
-        return OverlayAnswerModal(context) {
-            hideAnswerModal()
-        }
+        return OverlayAnswerModal(
+            context = context,
+            onClose = { hideAnswerModal() },
+            onNewSelection = { startNewSelection() }
+        )
     }
     
     private fun setupLayout() {
@@ -227,6 +232,8 @@ class OverlaySelectionView @JvmOverloads constructor(
     private fun startSelection(x: Float, y: Float) {
         selectionPath.reset()
         selectionPath.moveTo(x, y)
+        lastX = x
+        lastY = y
         selectionBounds.set(x, y, x, y)
         isDrawing = true
         hasSelection = false
@@ -235,9 +242,15 @@ class OverlaySelectionView @JvmOverloads constructor(
     
     private fun continueSelection(x: Float, y: Float) {
         if (isDrawing) {
-            selectionPath.lineTo(x, y)
+            // Use quadratic curve for smoother free-form drawing
+            val controlX = (lastX + x) / 2
+            val controlY = (lastY + y) / 2
+            selectionPath.quadTo(controlX, controlY, x, y)
             
-            // Update bounds
+            lastX = x
+            lastY = y
+            
+            // Update bounds for screenshot capture
             selectionBounds.left = minOf(selectionBounds.left, x)
             selectionBounds.top = minOf(selectionBounds.top, y)
             selectionBounds.right = maxOf(selectionBounds.right, x)
@@ -251,9 +264,19 @@ class OverlaySelectionView @JvmOverloads constructor(
         if (isDrawing) {
             selectionPath.close()
             isDrawing = false
-            hasSelection = !selectionPath.isEmpty && 
-                          selectionBounds.width() > 50 && 
-                          selectionBounds.height() > 50
+            
+            // Check if the selection path has enough points and area
+            val pathMeasure = PathMeasure(selectionPath, false)
+            val pathLength = pathMeasure.length
+            
+            // Calculate approximate area using path bounds
+            val bounds = RectF()
+            selectionPath.computeBounds(bounds, true)
+            val area = bounds.width() * bounds.height()
+            
+            // More flexible selection criteria - just need a reasonable path
+            hasSelection = pathLength > 50 && area > 1000 // Minimum path length and area
+            
             updateSolveButtonState()
         }
     }
@@ -278,10 +301,13 @@ class OverlaySelectionView @JvmOverloads constructor(
             try {
                 instructionText.text = "Capturing screenshot..."
                 
-                // Capture screenshot
+                // Capture screenshot using the selection path bounds
+                val bounds = RectF()
+                selectionPath.computeBounds(bounds, true)
+                
                 val screenshot = ScreenshotCapture.captureScreen(
                     mediaProjection,
-                    selectionBounds.toRect(),
+                    bounds.toRect(),
                     context.resources.displayMetrics
                 )
                 
@@ -321,6 +347,26 @@ class OverlaySelectionView @JvmOverloads constructor(
     
     private fun hideAnswerModal() {
         answerModal.hide()
+        onCloseListener()
+    }
+    
+    private fun startNewSelection() {
+        // Hide the answer modal
+        answerModal.hide()
+        
+        // Reset selection state
+        selectionPath.reset()
+        selectionBounds.setEmpty()
+        hasSelection = false
+        isDrawing = false
+        
+        // Update UI
+        updateSolveButtonState()
+        invalidate()
+        
+        // Reset instruction text
+        instructionText.text = "Draw a free-form shape around the content you want to analyze"
+        instructionText.setTextColor(Color.WHITE)
     }
     
     private fun showError(message: String) {
@@ -331,7 +377,7 @@ class OverlaySelectionView @JvmOverloads constructor(
         // Reset after 3 seconds
         coroutineScope.launch {
             delay(3000)
-            instructionText.text = "Draw around the content you want to analyze"
+            instructionText.text = "Draw a free-form shape around the content you want to analyze"
             instructionText.setTextColor(Color.WHITE)
         }
     }

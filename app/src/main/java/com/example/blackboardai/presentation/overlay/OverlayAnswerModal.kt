@@ -19,7 +19,8 @@ import com.example.blackboardai.R
 
 class OverlayAnswerModal(
     context: Context,
-    private val onClose: () -> Unit
+    private val onClose: () -> Unit,
+    private val onNewSelection: () -> Unit
 ) : FrameLayout(context) {
     
     private var isVisible = false
@@ -29,12 +30,16 @@ class OverlayAnswerModal(
     private val modalContainer: FrameLayout
     private val progressBar: ProgressBar
     private val closeButton: ImageButton
+    private val newSelectionButton: ImageButton
     private val responseTextView: TextView
     private val scrollView: ScrollView
     
     init {
         // Set up the modal container
         setBackgroundColor(Color.parseColor("#80000000")) // Semi-transparent background
+        
+        // Set initial visibility to GONE
+        visibility = View.GONE
         
         // Create modal container
         modalContainer = FrameLayout(context).apply {
@@ -52,6 +57,19 @@ class OverlayAnswerModal(
             
             setOnClickListener {
                 onClose()
+            }
+        }
+        
+        // Create new selection button
+        newSelectionButton = ImageButton(context).apply {
+            setImageResource(android.R.drawable.ic_menu_crop)
+            setBackgroundColor(Color.BLUE)
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(16, 16, 16, 16)
+            
+            setOnClickListener {
+                onNewSelection()
             }
         }
         
@@ -95,13 +113,23 @@ class OverlayAnswerModal(
             rightMargin = 16
         })
         
+        // Add new selection button to modal container
+        modalContainer.addView(newSelectionButton, LayoutParams(
+            80,
+            80
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            bottomMargin = 16
+            leftMargin = 16
+        })
+        
         // Add scroll view to modal container
         modalContainer.addView(scrollView, LayoutParams(
             LayoutParams.MATCH_PARENT,
             LayoutParams.MATCH_PARENT
         ).apply {
             topMargin = 100 // Space for close button
-            bottomMargin = 16
+            bottomMargin = 100 // Space for new selection button
             leftMargin = 16
             rightMargin = 16
         })
