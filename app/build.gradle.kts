@@ -93,6 +93,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     
+    // SavedState for Compose overlays
+    implementation("androidx.savedstate:savedstate:1.2.1")
+    implementation("androidx.savedstate:savedstate-ktx:1.2.1")
+    
     // Hilt Dependency Injection
     implementation("com.google.dagger:hilt-android:2.51.1")
     kapt("com.google.dagger:hilt-compiler:2.51.1")

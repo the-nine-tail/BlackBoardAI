@@ -45,8 +45,7 @@ class OverlaySelectionView @JvmOverloads constructor(
     private val solveButton: Button
     private val closeButton: ImageButton
     private val progressBar: ProgressBar
-    private val resultScrollView: ScrollView
-    private val resultText: TextView
+    private val answerModal: OverlayAnswerModal
     
     private var isProcessing = false
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -60,8 +59,7 @@ class OverlaySelectionView @JvmOverloads constructor(
         solveButton = createSolveButton()
         closeButton = createCloseButton()
         progressBar = createProgressBar()
-        resultScrollView = createResultScrollView()
-        resultText = createResultText()
+        answerModal = createAnswerModal()
         
         setupLayout()
     }
@@ -131,21 +129,9 @@ class OverlaySelectionView @JvmOverloads constructor(
         }
     }
     
-    private fun createResultScrollView(): ScrollView {
-        return ScrollView(context).apply {
-            visibility = GONE
-            setBackgroundColor(Color.BLACK)
-            setPadding(16, 16, 16, 16)
-        }
-    }
-    
-    private fun createResultText(): TextView {
-        return TextView(context).apply {
-            text = ""
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            setPadding(16, 16, 16, 16)
-            isScrollContainer = true
+    private fun createAnswerModal(): OverlayAnswerModal {
+        return OverlayAnswerModal(context) {
+            hideAnswerModal()
         }
     }
     
@@ -186,23 +172,13 @@ class OverlaySelectionView @JvmOverloads constructor(
             gravity = Gravity.CENTER
         })
         
-        // Add result scroll view (hidden initially)
-        addView(resultScrollView, LayoutParams(
+        // Add answer modal (hidden initially)
+        addView(answerModal, LayoutParams(
             LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT
+            LayoutParams.MATCH_PARENT
         ).apply {
             gravity = Gravity.CENTER
-            leftMargin = 50
-            rightMargin = 50
-            topMargin = 100
-            bottomMargin = 100
         })
-        
-        // Add result text to scroll view
-        resultScrollView.addView(resultText, LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.WRAP_CONTENT
-        ))
     }
     
     override fun onDraw(canvas: Canvas) {
@@ -296,6 +272,7 @@ class OverlaySelectionView @JvmOverloads constructor(
         isProcessing = true
         updateSolveButtonState()
         showProgress(true)
+        showAnswerModal()
         
         coroutineScope.launch {
             try {
@@ -311,13 +288,14 @@ class OverlaySelectionView @JvmOverloads constructor(
                 if (screenshot != null) {
                     instructionText.text = "Processing with AI..."
                     
-                    // Process with AI
-                    val result = withContext(Dispatchers.IO) {
-                        googleAIService.analyzeImage(screenshot)
+                    // Process with AI using streaming
+                    googleAIService.analyzeImageStreaming(screenshot).collect { response ->
+                        answerModal.updateResponse(response, streaming = true)
                     }
                     
-                    // Show result
-                    showResult(result)
+                    // Analysis complete
+                    instructionText.text = "Analysis complete!"
+                    
                 } else {
                     showError("Failed to capture screenshot")
                 }
@@ -337,20 +315,18 @@ class OverlaySelectionView @JvmOverloads constructor(
         progressBar.visibility = if (show) VISIBLE else GONE
     }
     
-    private fun showResult(result: String) {
-        instructionText.text = "Analysis complete!"
-        resultText.text = result
-        resultScrollView.visibility = VISIBLE
-        
-        // Scroll to top
-        resultScrollView.post {
-            resultScrollView.scrollTo(0, 0)
-        }
+    private fun showAnswerModal() {
+        answerModal.show()
+    }
+    
+    private fun hideAnswerModal() {
+        answerModal.hide()
     }
     
     private fun showError(message: String) {
         instructionText.text = message
         instructionText.setTextColor(Color.RED)
+        answerModal.showError(message)
         
         // Reset after 3 seconds
         coroutineScope.launch {

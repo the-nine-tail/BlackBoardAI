@@ -138,7 +138,7 @@ class GoogleAIService @Inject constructor(
      */
     suspend fun forceCompleteReset() = withContext(Dispatchers.IO) {
         initializationMutex.withLock {
-            Log.d(TAG, "🔄 FORCE RESET: Clearing all cached states and model files...")
+            Log.e(TAG, "🔄 FORCE RESET: Clearing all cached states and model files...")
             
             // CENTRAL COORDINATOR: Reset all flags
             initializationInProgress = false
@@ -164,7 +164,7 @@ class GoogleAIService @Inject constructor(
             try {
                 if (file.exists()) {
                     val deleted = file.delete()
-                    Log.d(TAG, "🗑️ Deleted model file: ${file.absolutePath} - Success: $deleted")
+                    Log.e(TAG, "🗑️ Deleted model file: ${file.absolutePath} - Success: $deleted")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete model file: ${file.absolutePath} - ${e.message}")
@@ -180,7 +180,7 @@ class GoogleAIService @Inject constructor(
             try {
                 if (file.exists()) {
                     file.delete()
-                    Log.d(TAG, "🗑️ Deleted temp file: ${file.absolutePath}")
+                    Log.e(TAG, "🗑️ Deleted temp file: ${file.absolutePath}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete temp file: ${file.absolutePath}")
@@ -197,7 +197,7 @@ class GoogleAIService @Inject constructor(
             progress = 0f
         )
         
-        Log.d(TAG, "✅ FORCE RESET: Complete - all cached states cleared")
+        Log.e(TAG, "✅ FORCE RESET: Complete - all cached states cleared")
         } // End of initializationMutex.withLock
     }
     
@@ -1103,6 +1103,50 @@ class GoogleAIService @Inject constructor(
         }
         
         return@withLock result
+    }
+    
+    /**
+     * Analyze a bitmap image for the overlay feature with streaming response
+     */
+    suspend fun analyzeImageStreaming(bitmap: android.graphics.Bitmap): Flow<String> = requestMutex.withLock {
+        if (!isModelInitialized || llmSession == null) {
+            return@withLock flow { emit("Model not initialized. Please wait...") }
+        }
+        
+        // Cancel any previous request
+        currentRequestJob?.cancel()
+        Log.d(TAG, "🔄 Cancelled previous AI request")
+        
+        try {
+            Log.d(TAG, "🖼️ Analyzing overlay image with streaming: ${bitmap.width}x${bitmap.height}")
+            
+            // Use multimodal analysis with a specific prompt for educational content
+            val prompt = "Analyze this image and provide a clear, educational explanation. If it contains text, summarize it. If it shows a diagram, explain what it represents. If it's a math problem, solve it step by step. If it's a concept, explain it in simple terms that a student would understand."
+            
+            // Reset the session to clear any previous state
+            try {
+                llmSession?.close()
+                val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+                    .setTopK(40)
+                    .setTemperature(0.2f)
+                    .setGraphOptions(GraphOptions.builder().setEnableVisionModality(true).build())
+                    .build()
+                llmSession = LlmInferenceSession.createFromOptions(llmInference!!, sessionOptions)
+                Log.d(TAG, "🔄 Reset LLM session for new streaming request")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not reset session: ${e.message}")
+            }
+            
+            // Use streaming approach for real-time response
+            generateMultimodalResponse(prompt, bitmap)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "💥 Error analyzing overlay image with streaming: ${e.message}")
+            flow { emit("Error analyzing image: ${e.message}") }
+        } finally {
+            // Clear the current request job after completion
+            currentRequestJob = null
+        }
     }
     
     /**
