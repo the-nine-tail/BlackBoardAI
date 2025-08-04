@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.blackboardai.data.ai.GoogleAIService
 import com.example.blackboardai.data.ai.ModelStatus
 import com.example.blackboardai.data.ai.ModelInitializationProgress
+import com.example.blackboardai.data.preferences.LanguagePreferencesService
+import com.example.blackboardai.data.preferences.SupportedLanguage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,11 +18,14 @@ import javax.inject.Inject
 
 @HiltViewModel
 class AppInitializationViewModel @Inject constructor(
-    private val googleAIService: GoogleAIService
+    private val googleAIService: GoogleAIService,
+    private val languagePreferencesService: LanguagePreferencesService
 ) : ViewModel() {
     
     private val _initializationState = MutableStateFlow(AppInitializationState())
     val initializationState: StateFlow<AppInitializationState> = _initializationState.asStateFlow()
+    
+    val selectedLanguage: StateFlow<SupportedLanguage> = languagePreferencesService.selectedLanguage
     
     init {
         monitorInitializationProgress()
@@ -81,6 +86,15 @@ class AppInitializationViewModel @Inject constructor(
             Log.d("AppInitViewModel", "🔐 Storage permission granted, starting initialization")
             googleAIService.initializeModelOnce()
         }
+    }
+    
+    fun setSelectedLanguage(language: SupportedLanguage) {
+        languagePreferencesService.setSelectedLanguage(language)
+        Log.d("AppInitViewModel", "🌐 Language selected: ${language.displayName}")
+    }
+    
+    fun getAllSupportedLanguages(): List<SupportedLanguage> {
+        return languagePreferencesService.getAllSupportedLanguages()
     }
     
     fun proceedToApp() {

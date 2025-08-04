@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blackboardai.data.ai.ModelStatus
+import com.example.blackboardai.data.preferences.SupportedLanguage
 import com.example.blackboardai.presentation.viewmodel.AppInitializationViewModel
 
 @Composable
@@ -35,6 +36,7 @@ fun InitializationScreen(
     viewModel: AppInitializationViewModel = hiltViewModel()
 ) {
     val state by viewModel.initializationState.collectAsStateWithLifecycle()
+    val selectedLanguage by viewModel.selectedLanguage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     
     // Permission state
@@ -161,7 +163,7 @@ fun InitializationScreen(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "AI-Powered Problem Solving",
+                text = "Gemma 3n Powered Problem Solving",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
             )
@@ -185,8 +187,11 @@ fun InitializationScreen(
                 // Initialization Status Card (only show when we have permission)
                 InitializationStatusCard(
                     state = state,
+                    selectedLanguage = selectedLanguage,
                     onRetry = viewModel::retryInitialization,
-                    onProceed = viewModel::proceedToApp
+                    onProceed = viewModel::proceedToApp,
+                    onLanguageSelected = viewModel::setSelectedLanguage,
+                    supportedLanguages = viewModel.getAllSupportedLanguages()
                 )
             }
         }
@@ -318,8 +323,11 @@ private fun PermissionRequestCard(
 @Composable
 private fun InitializationStatusCard(
     state: com.example.blackboardai.presentation.viewmodel.AppInitializationState,
+    selectedLanguage: SupportedLanguage,
     onRetry: () -> Unit,
-    onProceed: () -> Unit
+    onProceed: () -> Unit,
+    onLanguageSelected: (SupportedLanguage) -> Unit,
+    supportedLanguages: List<SupportedLanguage>
 ) {
     Card(
         modifier = Modifier
@@ -462,6 +470,15 @@ private fun InitializationStatusCard(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        // Language Selection Dropdown
+                        LanguageSelectionDropdown(
+                            selectedLanguage = selectedLanguage,
+                            onLanguageSelected = onLanguageSelected,
+                            supportedLanguages = supportedLanguages
                         )
                         
                         Spacer(modifier = Modifier.height(16.dp))
@@ -624,5 +641,67 @@ private fun formatPathForDisplay(path: String): String {
         }
     } else {
         displayPath
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LanguageSelectionDropdown(
+    selectedLanguage: SupportedLanguage,
+    onLanguageSelected: (SupportedLanguage) -> Unit,
+    supportedLanguages: List<SupportedLanguage>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = "Select Response Language",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = selectedLanguage.displayName,
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                textStyle = MaterialTheme.typography.bodyMedium
+            )
+            
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                supportedLanguages.forEach { language ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = language.displayName,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        },
+                        onClick = {
+                            onLanguageSelected(language)
+                            expanded = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
     }
 } 

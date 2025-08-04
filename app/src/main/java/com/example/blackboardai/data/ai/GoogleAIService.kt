@@ -5,6 +5,9 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
+import com.example.blackboardai.data.preferences.LanguagePreferencesService
+import com.google.mediapipe.framework.MediaPipeException
+import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.framework.image.BitmapExtractor
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
@@ -70,7 +73,8 @@ data class ModelIntegrityResult(
 @Singleton
 class GoogleAIService @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val modelDownloadService: ModelDownloadService
+    private val modelDownloadService: ModelDownloadService,
+    private val languagePreferencesService: LanguagePreferencesService
 ) {
     companion object {
         private const val TAG = "[BlackBoardAI Log]"
@@ -1012,7 +1016,9 @@ class GoogleAIService @Inject constructor(
                 Log.d(TAG, "🖼️ Analyzing overlay image: ${bitmap.width}x${bitmap.height}")
                 
                 // Use multimodal analysis with a specific prompt for educational content
-                val prompt = "Analyze this image and provide a clear, educational explanation. If it contains text, summarize it. If it shows a diagram, explain what it represents. If it's a math problem, solve it step by step. If it's a concept, explain it in simple terms that a student would understand."
+                val basePrompt = "Analyze this image and provide a clear, educational explanation. If it contains text, summarize it. If it shows a diagram, explain what it represents. If it's a math problem, solve it step by step. If it's a concept, explain it in simple terms that a student would understand."
+                val languageSuffix = languagePreferencesService.getLanguagePromptSuffix()
+                val prompt = "$basePrompt\n\n$languageSuffix"
                 
                 // Reset the session to clear any previous state
                 try {
@@ -1121,8 +1127,8 @@ class GoogleAIService @Inject constructor(
             Log.d(TAG, "🖼️ Analyzing overlay image with streaming: ${bitmap.width}x${bitmap.height}")
             
             // Use multimodal analysis with a specific prompt for educational content
-            val prompt = """
-           You are an “Physics and Math Expert tutor”, that receives a image which can contain:
+            val basePrompt = """
+           You are an "Physics and Math Expert tutor", that receives a image which can contain:
            1. A math or physics problem
            2. A concept or idea 
            3. A diagram (hand-drawn or not)
@@ -1147,6 +1153,9 @@ class GoogleAIService @Inject constructor(
            5. Do not output any image/video or their path in answer. If question contains image/video, 
            then you can refer to it in your answer but do not output their path/url/source.
         """.trimIndent()
+            
+            val languageSuffix = languagePreferencesService.getLanguagePromptSuffix()
+            val prompt = "$basePrompt\n\n$languageSuffix"
             
             // Reset the session to clear any previous state
             try {

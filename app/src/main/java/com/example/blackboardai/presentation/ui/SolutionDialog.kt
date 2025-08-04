@@ -3,6 +3,7 @@ package com.example.blackboardai.presentation.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,11 +25,19 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 fun CustomSolutionDialog(
     solution: String,
+    isStreaming: Boolean = false,
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp.dp
     val screenHeight = configuration.screenHeightDp.dp
+    
+    val listState = rememberLazyListState()
+    LaunchedEffect(solution, isStreaming) {
+        if (isStreaming || solution.isNotEmpty()) {
+            listState.animateScrollToItem(1)
+        }
+    }
     
     Dialog(
         onDismissRequest = onDismiss,
@@ -72,9 +81,8 @@ fun CustomSolutionDialog(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         
-                        // Show streaming indicator when solution is still growing
-                        if (solution.isNotEmpty() && !solution.trim().endsWith(".") && 
-                            !solution.trim().endsWith("!") && !solution.trim().endsWith("?")) {
+                        // Show streaming indicator only when actually streaming
+                        if (isStreaming) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
@@ -99,6 +107,7 @@ fun CustomSolutionDialog(
                 
                 // Content area with scrollable solution
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -113,6 +122,10 @@ fun CustomSolutionDialog(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+                    }
+                    
+                    item {
+                        Spacer(modifier = Modifier.height(1.dp))
                     }
                 }
                 

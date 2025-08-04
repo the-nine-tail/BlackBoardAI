@@ -16,6 +16,7 @@ import com.example.blackboardai.domain.entity.TextElement
 import com.example.blackboardai.domain.usecase.GetNoteByIdUseCase
 import com.example.blackboardai.domain.usecase.SaveNoteUseCase
 import com.example.blackboardai.data.ai.GoogleAIService
+import com.example.blackboardai.data.preferences.LanguagePreferencesService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,6 +80,7 @@ class DrawingViewModel @Inject constructor(
     private val saveNoteUseCase: SaveNoteUseCase,
     private val getNoteByIdUseCase: GetNoteByIdUseCase,
     private val googleAIService: GoogleAIService,
+    private val languagePreferencesService: LanguagePreferencesService,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     
@@ -1072,9 +1074,9 @@ class DrawingViewModel @Inject constructor(
     }
 
     private fun createImageBasedSolvingPrompt(): String {
-        return """
+        val basePrompt = """
             ###  SYSTEM  ###
-           You are “Sketch-Solve”, an offline tutor that receives a image of a hand-drawn
+           You are "Sketch-Solve", an offline tutor that receives a image of a hand-drawn
            math or physics problem and must reply in following format:
 
            ###  OUTPUT FORMAT  ###
@@ -1091,7 +1093,7 @@ class DrawingViewModel @Inject constructor(
            ###  FEW-SHOT EXAMPLES  ###
            **Example 1 - Simple geometry**
 
-           Hand-drawn diagram: (triangle with legs “3 cm” and “4 cm” labeled) 
+           Hand-drawn diagram: (triangle with legs "3 cm" and "4 cm" labeled) 
            <assistant does hidden work> 
            OUTPUT:
            Explanation: This is a right-angled triangle. The area of any triangle is ½ x base x height.
@@ -1100,13 +1102,16 @@ class DrawingViewModel @Inject constructor(
 
            **Example 2 - Newton's 2nd law**
 
-           Hand-drawn diagram: (block labeled “m = 2 kg”, arrow labeled “a = 3 m/s²” to the right) 
+           Hand-drawn diagram: (block labeled "m = 2 kg", arrow labeled "a = 3 m/s²" to the right) 
            <assistant does hidden work> 
            OUTPUT:
            
            Explanation: Newton's second law says force = mass x acceleration.  So 2 kg x 3 m/s² = 6 N.  It's like pushing a shopping cart: doubling the load doubles the push you feel.
            Answer: 6 N
         """.trimIndent()
+        
+        val languageSuffix = languagePreferencesService.getLanguagePromptSuffix()
+        return "$basePrompt\n\n$languageSuffix"
     }
 }
 

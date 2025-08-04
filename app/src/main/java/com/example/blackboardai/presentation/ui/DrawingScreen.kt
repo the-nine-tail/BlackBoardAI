@@ -80,6 +80,7 @@ fun DrawingScreen(
     if (uiState.showSolution) {
         CustomSolutionDialog(
             solution = uiState.aiSolution,
+            isStreaming = uiState.isSolving,
             onDismiss = viewModel::dismissSolution
         )
     }

@@ -319,7 +319,8 @@ class OverlaySelectionView @JvmOverloads constructor(
                         answerModal.updateResponse(response, streaming = true)
                     }
                     
-                    // Analysis complete
+                    // Analysis complete - set streaming to false
+                    answerModal.updateResponse(answerModal.getCurrentResponse(), streaming = false)
                     instructionText.text = "Analysis complete!"
                     
                 } else {

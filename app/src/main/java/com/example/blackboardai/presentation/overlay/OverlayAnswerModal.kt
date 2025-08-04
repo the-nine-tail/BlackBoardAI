@@ -178,6 +178,13 @@ class OverlayAnswerModal(
         updateResponseText("❌ Error: $message")
     }
     
+    /**
+     * Get the current response text
+     */
+    fun getCurrentResponse(): String {
+        return currentResponse
+    }
+    
     private fun updateResponseText(text: String) {
         val displayText = if (text.isBlank()) {
             "🧠 Analyzing your selection...\n\nPlease wait while I process the image and generate an analysis."
